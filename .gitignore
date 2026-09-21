@@ -1,0 +1,21 @@
+# Local Python environments
+.venv/
+.venv-parakeet/
+
+# Python-generated files
+__pycache__/
+*.py[cod]
+
+# Downloaded speech models and private runtime data
+models/
+data/
+
+# Per-machine settings
+config.json
+
+# Logs and editor/OS metadata
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
