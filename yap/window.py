@@ -405,8 +405,12 @@ class Window:
         # Tk's Windows ICO loader rejects some otherwise valid multi-resolution
         # icons (notably PNG-compressed 256 px frames).  Use a Tk photo for the
         # window/taskbar icon; the .ico remains available to Windows shortcuts.
-        self.window_icon = ImageTk.PhotoImage(yap_icon(BRAND_NAVY, 64), master=root)
-        root.iconphoto(True, self.window_icon)
+        # On Windows, iconphoto(True, ...) only changes the Tk class default, so the
+        # taskbar keeps Tk's feather; also set it on this window explicitly.
+        self.window_icons = [ImageTk.PhotoImage(yap_icon(BRAND_NAVY, size), master=root)
+                             for size in (256, 48, 32, 16)]
+        root.iconphoto(True, *self.window_icons)
+        root.iconphoto(False, *self.window_icons)
         root.protocol("WM_DELETE_WINDOW", self._close)
         self._style()
         self._shell()
