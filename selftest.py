@@ -66,6 +66,9 @@ def _text():
         ("um so, uh, hello there", "So, hello there"),
         ("meet tuesday, scratch that, meet friday", "Meet friday"),
         ("line one new line line two", "Line one\nline two"),
+        ("meet on tuesday, no wait, wednesday", "Meet on wednesday"),
+        ("grocery list, add apples, bananas, vanilla ice cream, no wait, actually chocolate ice cream, barbecue sauce",
+         "Grocery list:\n- Apples\n- Bananas\n- Chocolate ice cream\n- Barbecue sauce"),
     ]
     for src, want in cases:
         got = textproc.clean(src, cfg)
