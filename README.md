@@ -4,6 +4,14 @@ Free, local, offline voice dictation for Windows — a Wispr Flow-style tool. Ho
 
 ## Run
 
+### Download the Windows app
+
+Open the repository's **Releases** page, download `Yap-Windows-x64.zip`, extract it, and run `Yap.exe`. Windows may show a SmartScreen prompt because the app is not code-signed; choose **More info → Run anyway** if you trust the download. The app stores settings, logs, history, meetings, and downloaded speaker models in `%LOCALAPPDATA%\Yap`. The speech model downloads on first launch, so allow time and disk space for that download.
+
+Every push to `main` also builds a downloadable ZIP under the GitHub Actions run's **Artifacts**. To publish a version under **Releases**, push a version tag such as `v1.0.0`; the workflow attaches the ZIP to that release.
+
+### Run from source
+
 - **Start menu / Desktop → Yap** — opens the Yap window and keeps dictation in the system tray (bottom-right, next to the clock). Made by `.venv\Scripts\python create_shortcuts.py`.
 - **Bottom taskbar → dog icon** — pin the Yap desktop shortcut once and it stays available even when the window is closed.
 - `start.bat` — same app but with a console, handy for debugging.

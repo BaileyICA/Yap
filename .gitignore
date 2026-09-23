@@ -1,6 +1,8 @@
 # Local Python environments
 .venv/
 .venv-parakeet/
+build/
+dist/
 
 # Python-generated files
 __pycache__/

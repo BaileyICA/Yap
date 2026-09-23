@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 from pathlib import Path
+import sys
 
 from PIL import Image
 
@@ -9,7 +10,8 @@ from PIL import Image
 BRAND_NAVY = "#0d3260"
 CREAM = "#fdf7e8"
 APP_USER_MODEL_ID = "FreeFlow.Yap"
-LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "yap-logo.png"
+RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+LOGO_PATH = RESOURCE_ROOT / "assets" / "yap-logo.png"
 
 
 def register_windows_app_id():

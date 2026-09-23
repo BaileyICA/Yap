@@ -1,10 +1,20 @@
 import json
 import os
 import copy
+import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIG_PATH = os.path.join(ROOT, "config.json")
-DATA_DIR = os.path.join(ROOT, "data")
+FROZEN = getattr(sys, "frozen", False)
+ROOT = os.path.dirname(sys.executable if FROZEN else os.path.dirname(os.path.abspath(__file__)))
+if FROZEN:
+    # Keep settings, recordings, and logs writable without admin rights, even
+    # when the executable is launched from Downloads or Program Files.
+    APP_DATA_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "Yap")
+    CONFIG_PATH = os.path.join(APP_DATA_DIR, "config.json")
+    DATA_DIR = os.path.join(APP_DATA_DIR, "data")
+else:
+    APP_DATA_DIR = ROOT
+    CONFIG_PATH = os.path.join(ROOT, "config.json")
+    DATA_DIR = os.path.join(ROOT, "data")
 HISTORY_PATH = os.path.join(DATA_DIR, "history.jsonl")
 LOG_PATH = os.path.join(DATA_DIR, "yap.log")
 
