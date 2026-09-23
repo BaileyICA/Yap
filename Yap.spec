@@ -13,7 +13,7 @@ for package in ("ctranslate2", "faster_whisper", "onnxruntime", "soundcard"):
     hiddenimports += package_hiddenimports
 
 a = Analysis(
-    ["yap/__main__.py"],
+    ["launcher.py"],
     pathex=["."],
     binaries=binaries,
     datas=datas,
