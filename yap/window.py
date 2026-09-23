@@ -628,6 +628,23 @@ class Window:
         hero.pack(fill="x", padx=px(36))
         hero.bind("<Configure>", lambda e: self._paint_hero(hero, e.width, e.height))
 
+        scratch = Card(page, radius=14, pad=(16, 14))
+        scratch.pack(fill="x", padx=px(36), pady=(px(14), 0))
+        scratch_head = tk.Frame(scratch.body, bg=CARD)
+        scratch_head.pack(fill="x", pady=(0, px(9)))
+        scratch_words = tk.Frame(scratch_head, bg=CARD)
+        scratch_words.pack(side="left", fill="x", expand=True)
+        self._label(scratch_words, "Scratch pad", 11, bold=True).pack(anchor="w")
+        shortcut = " + ".join(_pretty_keys(self.app.cfg["hold_hotkey"]))
+        self._label(scratch_words, f"Type here or focus this box and use {shortcut} to test dictation.",
+                    9, MUTED).pack(anchor="w", pady=(px(2), 0))
+        scratch_box_card = Card(scratch.body, fill=FIELD, border=BORDER, radius=10, pad=(3, 3))
+        scratch_box_card.pack(fill="x")
+        scratch_box = self._text(scratch_box_card.body)
+        scratch_box.configure(height=4)
+        Button(scratch_head, "Clear", lambda: (scratch_box.delete("1.0", "end"), scratch_box.focus_set()),
+               "ghost", size=9).pack(side="right", padx=(px(8), 0))
+
         stats = tk.Frame(page, bg=BG)
         stats.pack(fill="x", padx=px(36), pady=(px(16), 0))
         meetings = list_meetings()
