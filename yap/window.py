@@ -882,6 +882,10 @@ class Window:
         actions.pack(side="right", anchor="n")
         folder = self.selected_folder
         Button(actions, "", lambda: os.startfile(folder), "ghost", GLYPH["folder"], size=11).pack(side="right")
+        if data.get("turns"):
+            copy = Button(actions, "", lambda: self._copy_transcript(data["turns"], copy), "ghost", GLYPH["copy"],
+                          size=11)
+            copy.pack(side="right")
         Button(actions, "Save", self._save_detail, "secondary", GLYPH["save"]).pack(side="right", padx=(0, px(6)))
         words = tk.Frame(head, bg=CARD)
         words.pack(side="left", fill="x", expand=True)
@@ -987,6 +991,12 @@ class Window:
         words = tk.Frame(banner.body, bg=banner.fill)
         words.pack(side="left", fill="x", expand=True, padx=(px(8), px(8)))
         self._label(words, text, 9, color, wrap=True).pack(anchor="w", fill="x")
+
+    def _copy_transcript(self, turns, button):
+        # Use the names typed in the speaker fields, even if they haven't been saved yet.
+        names = {key: field.get().strip() for key, field in self.name_entries.items()
+                 if field.winfo_exists() and field.get().strip()}
+        self._copy(transcript_text(turns, names), button)
 
     def _save_detail(self):
         if not self.selected_folder or self.notes_box is None or not self.notes_box.winfo_exists():
