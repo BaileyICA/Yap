@@ -1040,10 +1040,13 @@ class Window:
         self._section(page, "Dictation", pady=(0, px(10)))
         card = self._settings_card(page)
         self._setting_row(card, "Hold to dictate", "Keep held while you speak, release to paste.",
-                          lambda parent: self._keycaps(parent, self.app.cfg["hold_hotkey"]))
+                          lambda parent: self._keybind_control(parent, "hold_hotkey"))
         self._divider(card)
         self._setting_row(card, "Hands-free", "Double-tap the hold keys, or press this shortcut.",
-                          lambda parent: self._keycaps(parent, self.app.cfg["toggle_hotkey"]))
+                          lambda parent: self._keybind_control(parent, "toggle_hotkey"))
+        self._divider(card)
+        self._setting_row(card, "Cancel recording", "Discard the current recording immediately.",
+                          lambda parent: self._keybind_control(parent, "cancel_key"))
         self._divider(card)
         self._setting_row(card, "Speaking visual", "The pill shown near the bottom of your screen.",
                           lambda parent: Chip(parent, self.app.cfg["overlay_style"].title(), dot=False,
@@ -1115,6 +1118,94 @@ class Window:
                 tk.Label(keys, text="+", bg=keys.cget("bg"), fg=FAINT, font=font(9)).pack(side="left", padx=px(3))
             Chip(keys, key, dot=False, fill=RAISED, border=BORDER, bold=True).pack(side="left")
         return keys
+
+    def _keybind_control(self, parent, setting):
+        control = tk.Frame(parent, bg=parent.cget("bg"))
+        value = tk.Frame(control, bg=control.cget("bg"))
+        value.pack(side="left", padx=(0, px(10)))
+
+        def refresh():
+            for child in value.winfo_children():
+                child.destroy()
+            hotkey = self.app.cfg[setting]
+            self._keycaps(value, hotkey).pack()
+
+        def edit():
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Change shortcut")
+            dialog.configure(bg=CARD)
+            dialog.resizable(False, False)
+            dialog.transient(self.root)
+            dialog.grab_set()
+            dialog.geometry(f"{px(390)}x{px(185)}")
+            body = tk.Frame(dialog, bg=CARD, padx=px(24), pady=px(20))
+            body.pack(fill="both", expand=True)
+            self._label(body, "Press the new shortcut", 12, bold=True, display=True).pack(anchor="w")
+            self._label(body, "Hold the keys together, then release them to save.", 9, MUTED,
+                        wrap=True).pack(anchor="w", pady=(px(7), px(18)))
+            self._label(body, "Waiting for keys…", 9, ACCENT).pack(anchor="w")
+            actions = tk.Frame(body, bg=CARD)
+            actions.pack(side="bottom", fill="x", pady=(px(12), 0))
+            capture = {"keys": [], "down": set(), "finished": False}
+
+            def close():
+                self.app.end_key_capture()
+                try:
+                    dialog.grab_release()
+                except tk.TclError:
+                    pass
+                dialog.destroy()
+
+            def finish():
+                if capture["finished"] or not capture["keys"] or not dialog.winfo_exists():
+                    return
+                capture["finished"] = True
+                chord = "+".join(capture["keys"])
+                canonical = lambda value: {self._canonical_key(part) for part in value.split("+")}
+                for key_name in ("hold_hotkey", "toggle_hotkey", "cancel_key"):
+                    if key_name != setting and canonical(self.app.cfg[key_name]) == canonical(chord):
+                        messagebox.showerror("Shortcut already in use",
+                                             "Choose a shortcut that is different from the other actions.",
+                                             parent=dialog)
+                        capture["finished"] = False
+                        capture["keys"].clear()
+                        close()
+                        return
+                try:
+                    self.app.set_keybind(setting, chord)
+                except (OSError, ValueError, TypeError) as exc:
+                    messagebox.showerror("Could not save shortcut", str(exc), parent=dialog)
+                    capture["finished"] = False
+                    close()
+                    return
+                refresh()
+                close()
+
+            def on_key(event):
+                name = self._canonical_key(event.name)
+                if event.event_type == "down":
+                    if name not in capture["down"]:
+                        capture["keys"].append(name)
+                        capture["down"].add(name)
+                else:
+                    capture["down"].discard(name)
+                    if capture["keys"] and not capture["down"]:
+                        self.root.after(0, finish)
+
+            self.app.begin_key_capture(on_key)
+            Button(actions, "Cancel", close, "secondary", size=9).pack(side="right")
+            dialog.protocol("WM_DELETE_WINDOW", close)
+
+        Button(control, "Change", edit, "secondary", GLYPH["keyboard"], size=9).pack(side="right")
+        refresh()
+        return control
+
+    @staticmethod
+    def _canonical_key(name):
+        name = (name or "").lower()
+        if name.startswith("left ") or name.startswith("right "):
+            name = name.split(" ", 1)[1]
+        return {"win": "windows", "escape": "esc"}.get(name, name)
 
     def _set_autostart(self, on):
         try:

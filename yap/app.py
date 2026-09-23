@@ -38,7 +38,7 @@ class App:
         self.recorder = Recorder(on_level=self.overlay.level)
         self.tr = Transcriber(self.cfg, log=self.log)
         self.hold = _combo(self.cfg["hold_hotkey"])
-        self.cancel = _norm(self.cfg["cancel_key"])
+        self.cancel = _combo(self.cfg["cancel_key"])
         self.down = set()
         self.state = "loading"  # loading | idle | recording | busy
         self.mode = None        # hold | toggle
@@ -52,6 +52,8 @@ class App:
         self.jobs = queue.Queue()
         self.tray = None
         self.window = None
+        self.key_capture_callback = None
+        self.toggle_hotkey_id = None
         self.meeting_capture = None
         self.model_ready = threading.Event()
         self.model_lock = threading.Lock()
@@ -144,6 +146,9 @@ class App:
             self.last_tap = now  # first tap of a double-tap to stop hands-free mode
 
     def on_key(self, e):
+        if self.key_capture_callback:
+            self.key_capture_callback(e)
+            return
         k = _norm(e.name)
         now = time.time()
         if e.event_type == "down":
@@ -157,7 +162,7 @@ class App:
                 self.combo_active = True
                 self._combo_pressed(now)
             if self.state == "recording":
-                if k == self.cancel:
+                if self.cancel <= self.down:
                     self.stop_rec(discard=True)
                 elif self.mode == "hold" and k not in self.hold and now - self.t0 < 0.5:
                     self.stop_rec(discard=True)  # it was a shortcut like Ctrl+Win+Arrow, not dictation
@@ -172,6 +177,37 @@ class App:
             self.stop_rec()
         elif self.state == "idle":
             self.start_rec("toggle")
+
+    def begin_key_capture(self, callback):
+        """Temporarily route the global keyboard hook to the shortcut recorder."""
+        self.key_capture_callback = callback
+        self.down.clear()
+        self.combo_active = False
+        if self.toggle_hotkey_id is not None:
+            keyboard.remove_hotkey(self.toggle_hotkey_id)
+            self.toggle_hotkey_id = None
+
+    def end_key_capture(self):
+        self.key_capture_callback = None
+        self.down.clear()
+        self.combo_active = False
+        if self.toggle_hotkey_id is None:
+            self.toggle_hotkey_id = keyboard.add_hotkey(self.cfg["toggle_hotkey"], self.on_toggle)
+
+    def set_keybind(self, setting, hotkey):
+        if setting not in ("hold_hotkey", "toggle_hotkey", "cancel_key"):
+            raise ValueError("Unknown shortcut setting")
+        config.save_updates(**{setting: hotkey})
+        self.cfg[setting] = hotkey
+        if setting == "hold_hotkey":
+            self.hold = _combo(hotkey)
+        elif setting == "cancel_key":
+            self.cancel = _combo(hotkey)
+        elif self.toggle_hotkey_id is not None:
+            keyboard.remove_hotkey(self.toggle_hotkey_id)
+            self.toggle_hotkey_id = keyboard.add_hotkey(hotkey, self.on_toggle)
+        self.down.clear()
+        self.combo_active = False
 
     # ---- worker: transcribe -> clean -> insert ----
     def worker(self):
@@ -351,7 +387,7 @@ class App:
         threading.Thread(target=_wait_for_open, args=(self.window,), daemon=True).start()
         threading.Thread(target=self.worker, daemon=True).start()
         keyboard.hook(self.on_key)
-        keyboard.add_hotkey(self.cfg["toggle_hotkey"], self.on_toggle)
+        self.toggle_hotkey_id = keyboard.add_hotkey(self.cfg["toggle_hotkey"], self.on_toggle)
         self.overlay.show("info", "Loading model...")
         hint = f"Hold {self.cfg['hold_hotkey']} to dictate"
         menu = pystray.Menu(
