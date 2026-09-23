@@ -18,6 +18,24 @@ PALETTES = {
 }
 # (cycles across the pill, phase speed rad/s, amplitude scale) for each of the three waves
 WAVES = ((1.6, 5.2, 1.00), (2.3, -3.6, 0.72), (3.1, 7.4, 0.48))
+STYLES = ("wave", "bars", "orb", "dots")
+BAR_COUNT = 27
+DOT_COUNT = 7
+# "Soft bars": a two-tone gradient per state (dim -> bright), blended per bar by how tall it is,
+# instead of the wave/dot styles' fixed per-item colour cycling.
+SOFT_BARS = {
+    "listening": ("#3a2f70", "#c2b3ff"),
+    "working": ("#5c4106", "#ffd580"),
+    "done": ("#0d4a22", "#8affc0"),
+    "info": ("#38383f", "#c7c7cf"),
+}
+
+
+def _lerp_hex(c1, c2, t):
+    t = max(0.0, min(1.0, t))
+    a = tuple(int(c1[i:i + 2], 16) for i in (1, 3, 5))
+    b = tuple(int(c2[i:i + 2], 16) for i in (1, 3, 5))
+    return "#" + "".join(f"{round(a[i] + (b[i] - a[i]) * t):02x}" for i in range(3))
 
 GWL_EXSTYLE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW = -20, 0x08000000, 0x00000080
 FPS_MS = 25
@@ -26,9 +44,10 @@ FPS_MS = 25
 class Overlay:
     """Always-on-top wave pill that never takes focus, so the target app keeps the caret."""
 
-    def __init__(self):
+    def __init__(self, style="wave"):
         self._q = queue.Queue()
         self._level = 0.0
+        self.style = style if style in STYLES else "wave"
         threading.Thread(target=self._run, daemon=True).start()
 
     def show(self, kind, text):
@@ -62,9 +81,17 @@ class Overlay:
         cv.create_oval(W - H, 0, W, H, fill=BG, outline="")
         cv.create_rectangle(r, 0, W - r, H, fill=BG, outline="")
 
-        # Glow lines go underneath, sharp lines on top; coords are rewritten every frame.
-        glows = [cv.create_line(0, r, 1, r, width=max(2, round(7 * S)), smooth=True, capstyle="round") for _ in WAVES]
-        lines = [cv.create_line(0, r, 1, r, width=max(1, round(2 * S)), smooth=True, capstyle="round") for _ in WAVES]
+        # Only the selected visual is created; its coordinates are rewritten every frame.
+        glows, lines, bars, orbs, dots = [], [], [], [], []
+        if self.style == "wave":
+            glows = [cv.create_line(0, r, 1, r, width=max(2, round(7 * S)), smooth=True, capstyle="round") for _ in WAVES]
+            lines = [cv.create_line(0, r, 1, r, width=max(1, round(2 * S)), smooth=True, capstyle="round") for _ in WAVES]
+        elif self.style == "bars":
+            bars = [cv.create_line(0, r, 0, r, width=max(2, round(3 * S)), capstyle="round") for _ in range(BAR_COUNT)]
+        elif self.style == "orb":
+            orbs = [cv.create_oval(0, 0, 1, 1) for _ in range(3)]
+        else:
+            dots = [cv.create_oval(0, 0, 1, 1, outline="") for _ in range(DOT_COUNT)]
         label = cv.create_text(int(28 * S), r, text="", fill="white", anchor="w", font=("Segoe UI Semibold", 11))
         caption = cv.create_text(W // 2, H - int(8 * S), text="", fill="#8e8e93", font=("Segoe UI", 7))
         root.withdraw()
@@ -84,8 +111,17 @@ class Overlay:
             st["kind"] = kind
             glow_c, main_c = PALETTES.get(kind, PALETTES["info"])
             for i in range(len(WAVES)):
-                cv.itemconfig(glows[i], fill=glow_c[i])
-                cv.itemconfig(lines[i], fill=main_c[i])
+                if glows:
+                    cv.itemconfig(glows[i], fill=glow_c[i])
+                    cv.itemconfig(lines[i], fill=main_c[i])
+            for i, bar in enumerate(bars):
+                cv.itemconfig(bar, fill=main_c[i % len(main_c)])
+            if orbs:
+                cv.itemconfig(orbs[0], fill="", outline=glow_c[0], width=max(2, round(6 * S)))
+                cv.itemconfig(orbs[1], fill="", outline=main_c[1], width=max(1, round(2 * S)))
+                cv.itemconfig(orbs[2], fill=main_c[0], outline=main_c[2], width=max(1, round(2 * S)))
+            for i, dot in enumerate(dots):
+                cv.itemconfig(dot, fill=main_c[i % len(main_c)])
             if kind == "listening":
                 cv.itemconfig(label, text="")
                 cv.itemconfig(caption, text="hands-free" if "hands-free" in text else "")
@@ -115,15 +151,41 @@ class Overlay:
                 x0, x1 = int(W * 0.58), W - r
             span = x1 - x0
             half = H / 2 - 9 * S
-            for i, (cycles, speed, scale) in enumerate(WAVES):
-                pts = []
-                for k in range(0, span + 1, max(3, int(5 * S))):
-                    u = k / span
-                    env = math.sin(math.pi * u) ** 1.4  # pinch to zero at both ends
-                    y = r + half * amp * scale * env * math.sin(2 * math.pi * cycles * u + t * speed)
-                    pts += (x0 + k, y)
-                cv.coords(glows[i], *pts)
-                cv.coords(lines[i], *pts)
+            if self.style == "wave":
+                for i, (cycles, speed, scale) in enumerate(WAVES):
+                    pts = []
+                    for k in range(0, span + 1, max(3, int(5 * S))):
+                        u = k / span
+                        env = math.sin(math.pi * u) ** 1.4  # pinch to zero at both ends
+                        y = r + half * amp * scale * env * math.sin(2 * math.pi * cycles * u + t * speed)
+                        pts += (x0 + k, y)
+                    cv.coords(glows[i], *pts)
+                    cv.coords(lines[i], *pts)
+            elif self.style == "bars":
+                dim_c, bright_c = SOFT_BARS.get(kind, SOFT_BARS["info"])
+                gap = span / max(1, BAR_COUNT - 1)
+                for i, bar in enumerate(bars):
+                    u = i / max(1, BAR_COUNT - 1)
+                    shape = math.exp(-((u - 0.5) / 0.33) ** 2)  # gaussian envelope, tallest in the middle
+                    flutter = math.sin(t * 3.1 + i * 0.9) * math.sin(t * 7.3 + i * 0.41)
+                    height = max(2.4 * S, half * amp * shape * (0.35 + 0.65 * max(0.0, flutter)))
+                    x = x0 + i * gap
+                    cv.coords(bar, x, r - height, x, r + height)
+                    cv.itemconfig(bar, fill=_lerp_hex(dim_c, bright_c, shape * amp * 1.3 + 0.15))
+            elif self.style == "orb":
+                cx = (x0 + x1) / 2
+                base = min(half, span * 0.30)
+                pulse = 1.0 + 0.10 * math.sin(t * 5.5)
+                radii = (base * (0.85 + amp * 0.35) * pulse, base * (0.58 + amp * 0.18), base * (0.22 + amp * 0.16))
+                for item, radius in zip(orbs, radii):
+                    cv.coords(item, cx - radius, r - radius, cx + radius, r + radius)
+            else:
+                gap = span / max(1, DOT_COUNT - 1)
+                radius = max(2 * S, 2.8 * S + amp * 1.8 * S)
+                for i, dot in enumerate(dots):
+                    x = x0 + i * gap
+                    y = r + half * amp * 0.65 * math.sin(t * 5.5 + i * 0.85)
+                    cv.coords(dot, x - radius, y - radius, x + radius, y + radius)
 
         def tick():
             nonlocal styled

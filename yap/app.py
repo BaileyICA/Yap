@@ -1,19 +1,22 @@
 import json
 import os
 import queue
+import sys
 import threading
 import time
 import winsound
 
 import keyboard
 import pystray
-from PIL import Image, ImageDraw
-
 from . import autostart, config, textproc
 from .audio import Recorder, SAMPLE_RATE
+from .branding import icon as _icon
 from .inject import insert
 from .overlay import Overlay
 from .transcribe import Transcriber
+from .meetings import MeetingCapture, list_meetings
+from .meeting_notes import process_meeting
+from .window import Window
 
 
 def _norm(name):
@@ -28,21 +31,10 @@ def _combo(s):
     return {_norm(k.strip()) for k in s.split("+")}
 
 
-def _icon(color):
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.ellipse((2, 2, 62, 62), fill=color)
-    # Five bars of a sound wave, tallest in the middle; reads clearly even at 16x16.
-    for i, h in enumerate((12, 26, 40, 26, 12)):
-        x = 10 + i * 11
-        d.rounded_rectangle((x, 32 - h // 2, x + 6, 32 + h // 2), 3, fill="white")
-    return img
-
-
 class App:
     def __init__(self):
         self.cfg = config.load()
-        self.overlay = Overlay()
+        self.overlay = Overlay(self.cfg["overlay_style"])
         self.recorder = Recorder(on_level=self.overlay.level)
         self.tr = Transcriber(self.cfg, log=self.log)
         self.hold = _combo(self.cfg["hold_hotkey"])
@@ -59,6 +51,11 @@ class App:
         self.enabled = True
         self.jobs = queue.Queue()
         self.tray = None
+        self.window = None
+        self.meeting_capture = None
+        self.model_ready = threading.Event()
+        self.model_lock = threading.Lock()
+        self.model_error = None
 
     def log(self, msg):
         line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}"
@@ -181,19 +178,29 @@ class App:
         try:
             self.tr.load()
         except Exception as e:  # noqa: BLE001
+            self.model_error = str(e)
+            self.model_ready.set()
             self.log(f"FATAL: could not load any speech model: {type(e).__name__}: {e}")
             self.overlay.show("info", "Model failed to load")
             self._tray_status("#ff453a", "model failed to load - see data/yap.log")
             return
-        self.state = "idle"
+        self.model_ready.set()
+        if self.state == "loading":
+            self.state = "idle"
         self.overlay.show("done", f"Ready ({self.tr.device.upper()})")
         threading.Timer(1.5, self.overlay.hide).start()
         self._tray_status()
+        if self.window:
+            self.window.update(f"Ready — speech model on {self.tr.device.upper()}")
+        for item in list_meetings():
+            if item.get("status") == "processing":
+                self.reprocess_meeting(item["folder"])
         while True:
             audio = self.jobs.get()
             t = time.time()
             try:
-                raw = self.tr.transcribe(audio)
+                with self.model_lock:
+                    raw = self.tr.transcribe(audio)
                 text = textproc.clean(raw, self.cfg)
                 text = textproc.polish(text, self.cfg)
                 if text:
@@ -224,15 +231,17 @@ class App:
         if not self.tray:
             return
         if color is None:
-            if self.state == "recording":
+            if self.state in ("recording", "meeting"):
                 color = "#ff453a"
-            elif self.state == "loading":
+            elif self.state in ("loading", "busy", "meeting_starting", "meeting_processing"):
                 color = "#ffd60a"
             else:
                 color = "#30d158" if self.enabled else "#8e8e93"
         if text is None:
             text = "paused" if not self.enabled else {
                 "loading": "loading model...", "recording": "listening", "busy": "transcribing",
+                "meeting": "recording meeting", "meeting_starting": "starting meeting",
+                "meeting_processing": "processing meeting",
             }.get(self.state, "ready")
         self.tray.icon = _icon(color)
         self.tray.title = f"Yap ({self.tr.device or 'starting'}) - {text}"
@@ -240,6 +249,92 @@ class App:
     def _toggle_enabled(self, *_):
         self.enabled = not self.enabled
         self._tray_status()
+
+    def start_meeting(self, title, computer_audio=True):
+        if self.state != "idle" or self.meeting_capture:
+            if self.window:
+                self.window.update("Wait until dictation or the speech model finishes.", "Meetings")
+            return
+        self.state = "meeting_starting"
+        self._tray_status()
+        if self.window:
+            self.window.update("Starting microphone and computer audio...", "Meetings")
+
+        def begin():
+            try:
+                capture = MeetingCapture(title, computer_audio)
+                capture.start()
+                self.meeting_capture = capture
+                self.state = "meeting"
+                self.log(f"Meeting recording started: {capture.folder}")
+                self._tray_status()
+                self.window.update("Recording in progress", "Meetings")
+            except Exception as exc:  # noqa: BLE001
+                self.log(f"Meeting recording failed: {type(exc).__name__}: {exc}")
+                self.state = "idle"
+                self._tray_status()
+                self.window.update(f"Could not start recording: {exc}", "Meetings")
+
+        threading.Thread(target=begin, daemon=True).start()
+
+    def stop_meeting(self):
+        capture = self.meeting_capture
+        if not capture:
+            return
+        self.meeting_capture = None
+        self.state = "meeting_processing"
+        self._tray_status()
+        if self.window:
+            self.window.update("Saving audio...", "Meetings")
+
+        def finish():
+            try:
+                folder = capture.stop()
+                self.log(f"Meeting recording saved: {folder}")
+                self.reprocess_meeting(folder)
+            except Exception as exc:  # noqa: BLE001
+                self.log(f"Could not stop meeting: {type(exc).__name__}: {exc}")
+                self.state = "idle"
+                self._tray_status()
+                self.window.update(f"Recording error: {exc}", "Meetings")
+
+        threading.Thread(target=finish, daemon=False).start()
+
+    def reprocess_meeting(self, folder):
+        if self.state not in ("idle", "meeting_processing"):
+            if self.window:
+                self.window.update("Wait until the current recording finishes.", "Meetings")
+            return
+        self.state = "meeting_processing"
+        self._tray_status()
+
+        def process():
+            if self.window:
+                self.window.update("Waiting for speech model...", "Meetings")
+            self.model_ready.wait()
+            if self.model_error:
+                if self.window:
+                    self.window.update(f"Speech model unavailable: {self.model_error}", "Meetings")
+                self.state = "idle"
+                self._tray_status()
+                return
+            try:
+                with self.model_lock:
+                    process_meeting(folder, self.tr.model, self.cfg,
+                                    progress=lambda msg: self.window.update(msg, "Meetings") if self.window else None,
+                                    log=self.log, beam_size=self.tr.beam)
+                self.log(f"Meeting notes ready: {folder}")
+                if self.window:
+                    self.window.update("Meeting notes ready", "Meetings")
+            except Exception as exc:  # noqa: BLE001
+                self.log(f"Meeting processing failed: {type(exc).__name__}: {exc}")
+                if self.window:
+                    self.window.update(f"Meeting processing failed: {exc}", "Meetings")
+            finally:
+                self.state = "idle"
+                self._tray_status()
+
+        threading.Thread(target=process, daemon=True).start()
 
     def _toggle_autostart(self, *_):
         autostart.set_enabled(not autostart.enabled())
@@ -251,7 +346,9 @@ class App:
         except OSError:
             os.system(f'notepad.exe "{path}"')
 
-    def run(self):
+    def run(self, show_window=True):
+        self.window = Window(self, visible=show_window)
+        threading.Thread(target=_wait_for_open, args=(self.window,), daemon=True).start()
         threading.Thread(target=self.worker, daemon=True).start()
         keyboard.hook(self.on_key)
         keyboard.add_hotkey(self.cfg["toggle_hotkey"], self.on_toggle)
@@ -260,19 +357,25 @@ class App:
         menu = pystray.Menu(
             pystray.MenuItem(hint, None, enabled=False),
             pystray.Menu.SEPARATOR,
-            # Default item = what a left-click / double-click on the tray icon does.
-            pystray.MenuItem("Enabled", self._toggle_enabled, checked=lambda _: self.enabled, default=True),
+            pystray.MenuItem("🏠  Open Yap", lambda *_: self.window.show(), default=True),
+            pystray.MenuItem("🎙  Record a meeting", lambda *_: self.window.show("Meetings")),
+            pystray.MenuItem("🕘  Dictation history", lambda *_: self.window.show("History")),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Dictation enabled", self._toggle_enabled, checked=lambda _: self.enabled),
             pystray.MenuItem("Start with Windows", self._toggle_autostart, checked=lambda _: autostart.enabled()),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Edit settings (config.json)", lambda *_: self._open(config.CONFIG_PATH)),
-            pystray.MenuItem("Open history", lambda *_: self._open(config.HISTORY_PATH) if os.path.exists(config.HISTORY_PATH) else None),
-            pystray.MenuItem("Open log", lambda *_: self._open(config.LOG_PATH) if os.path.exists(config.LOG_PATH) else None),
-            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("🛠  Advanced", pystray.Menu(
+                pystray.MenuItem("Edit config.json", lambda *_: self._open(config.CONFIG_PATH)),
+                pystray.MenuItem("Open history file", lambda *_: self._open(config.HISTORY_PATH) if os.path.exists(config.HISTORY_PATH) else None),
+                pystray.MenuItem("Open log", lambda *_: self._open(config.LOG_PATH) if os.path.exists(config.LOG_PATH) else None),
+            )),
             pystray.MenuItem("Quit Yap", lambda icon, _: icon.stop()),
         )
         self.tray = pystray.Icon("Yap", _icon("#ffd60a"), "Yap (loading)", menu)
         self.log(f"Hold {self.cfg['hold_hotkey']} to dictate; double-tap it (or press {self.cfg['toggle_hotkey']}) for hands-free.")
         self.tray.run()  # blocks until Quit
+        if self.meeting_capture:
+            self.meeting_capture.stop()  # leave saved audio for the next launch to process
         keyboard.unhook_all()
 
 
@@ -280,12 +383,52 @@ def _already_running():
     """Named mutex: a second copy would double-fire every hotkey and fight over the mic.
     """
     import ctypes
+    from ctypes import wintypes
 
-    ctypes.windll.kernel32.CreateMutexW(None, False, "Local\\YapSingleInstance")
+    kernel = ctypes.windll.kernel32
+    kernel.CreateMutexW.restype = wintypes.HANDLE
+    kernel.CreateMutexW(None, False, "Local\\YapSingleInstance")
     return ctypes.windll.kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
 
 
+def _open_event():
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.windll.kernel32
+    kernel.CreateEventW.restype = wintypes.HANDLE
+    return kernel.CreateEventW(None, False, False, "Local\\YapOpenWindow")
+
+
+def _wait_for_open(window):
+    import ctypes
+
+    event = _open_event()
+    while True:
+        if ctypes.windll.kernel32.WaitForSingleObject(event, 1000) == 0:
+            window.app.log("Opening Yap window from shortcut")
+            window.show()
+
+
+def _signal_existing():
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.windll.kernel32
+    kernel.OpenEventW.restype = wintypes.HANDLE
+    event = kernel.OpenEventW(0x0002, False, "Local\\YapOpenWindow")
+    if event:
+        kernel.SetEvent(event)
+        kernel.CloseHandle(event)
+
+
 def main():
+    # Register before creating any windows so Windows uses Yap's name and dog
+    # icon for its taskbar button instead of treating it as generic pythonw.exe.
+    from .branding import register_windows_app_id
+
+    register_windows_app_id()
     if _already_running():
+        _signal_existing()
         return
-    App().run()
+    App().run(show_window="--hidden" not in sys.argv)

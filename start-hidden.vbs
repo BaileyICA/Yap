@@ -2,4 +2,4 @@
 Set sh = CreateObject("WScript.Shell")
 dir = CreateObject("Scripting.FileSystemObject").GetParentFolderName(WScript.ScriptFullName)
 sh.CurrentDirectory = dir
-sh.Run """" & dir & "\.venv\Scripts\pythonw.exe"" -m yap", 0, False
+sh.Run """" & dir & "\.venv\Scripts\pythonw.exe"" -m yap --hidden", 0, False

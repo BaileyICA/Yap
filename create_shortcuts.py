@@ -9,14 +9,14 @@ import sys
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 
-from yap.app import _icon  # noqa: E402
+from yap.branding import BRAND_NAVY, icon  # noqa: E402
 
 ASSETS = os.path.join(ROOT, "assets")
 ICO = os.path.join(ASSETS, "yap.ico")
 PYW = os.path.join(ROOT, ".venv", "Scripts", "pythonw.exe")
 
 os.makedirs(ASSETS, exist_ok=True)
-img = _icon("#30d158").resize((256, 256))
+img = icon(BRAND_NAVY, 256)
 img.save(ICO, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
 
 ps = f"""
@@ -31,7 +31,7 @@ foreach ($t in $targets) {{
   $s.Arguments = '-m yap'
   $s.WorkingDirectory = '{ROOT}'
   $s.IconLocation = '{ICO}'
-  $s.Description = 'Yap - free local voice dictation'
+  $s.Description = 'Yap - voice dictation and meeting notes'
   $s.WindowStyle = 7
   $s.Save()
   Write-Output $t

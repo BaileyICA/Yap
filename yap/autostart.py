@@ -23,5 +23,5 @@ def set_enabled(on):
         f.write(
             'Set sh = CreateObject("WScript.Shell")\n'
             f'sh.CurrentDirectory = "{ROOT}"\n'
-            f'sh.Run """{pyw}"" -m yap", 0, False\n'
+            f'sh.Run """{pyw}"" -m yap --hidden", 0, False\n'
         )

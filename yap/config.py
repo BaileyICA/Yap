@@ -30,6 +30,8 @@ DEFAULTS = {
     "remove_fillers": True,
     "beep": False,
     "min_recording_seconds": 0.35,
+    # Speaking visual: "bars" (soft rounded equalizer, default), "wave", "orb", or "dots".
+    "overlay_style": "bars",
     # Words/names Whisper should get right. Also biases recognition.
     "vocabulary": ["Wispr Flow", "OpenAI", "Claude", "Anthropic"],
     # Fix consistent mis-hearings: heard -> replacement.
@@ -43,6 +45,12 @@ DEFAULTS = {
         "model": "llama3.2:3b",
         "style": "Keep my wording and tone; just fix grammar and punctuation.",
         "timeout_seconds": 20,
+    },
+    "meeting_notes": {
+        "use_ollama": True,
+        "ollama_url": "http://localhost:11434",
+        "ollama_model": "llama3.2:3b",
+        "timeout_seconds": 300,
     },
 }
 
@@ -65,3 +73,19 @@ def load():
         return copy.deepcopy(DEFAULTS)
     with open(CONFIG_PATH, encoding="utf-8") as f:
         return _merge(DEFAULTS, json.load(f))
+
+
+def save_updates(**updates):
+    """Persist top-level settings without discarding custom config entries."""
+    os.makedirs(DATA_DIR, exist_ok=True)
+    data = {}
+    if os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+    data.update(copy.deepcopy(updates))
+
+    temporary_path = CONFIG_PATH + ".tmp"
+    with open(temporary_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+    os.replace(temporary_path, CONFIG_PATH)
