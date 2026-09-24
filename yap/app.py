@@ -318,6 +318,15 @@ class App:
         self.cfg["microphone"] = name
         self.recorder.microphone = name
 
+    def set_overlay_style(self, style):
+        """Save the speaking visual and switch the pill to it now, with a short preview when idle."""
+        config.save_updates(overlay_style=style)
+        self.cfg["overlay_style"] = style
+        self.overlay.set_style(style)
+        if self.state == "idle":
+            self.overlay.show("done", "Preview")
+            threading.Timer(1.5, lambda: self.state == "idle" and self.overlay.hide()).start()
+
     # ---- dictionary ----
     def update_dictionary(self, vocabulary=None, replacements=None):
         """Save vocabulary/replacements; the next dictation uses them (the worker reads self.cfg)."""

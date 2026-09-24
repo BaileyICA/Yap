@@ -58,7 +58,7 @@ Open **Yap → Settings** to choose the speech engine (Parakeet or Whisper) and 
 - `language` — `en`, `fr`, … or `auto`
 - `gpu_model` / `cpu_model` — any faster-whisper model name (Whisper engine only)
 - `insert_method` — `paste` (fast) or `type`
-- `overlay_style` — speaking visual: `wave`, `bars`, `orb`, or `dots`
+- `overlay_style` — speaking visual: `dog`, `bars`, `wave`, `orb`, or `dots` (also in Settings)
 - `polish` — optional AI rewrite (grammar, self-corrections, tone) using a free local LLM through [Ollama](https://ollama.com): install it, `ollama pull llama3.2:3b`, set `"enabled": true`
 
 History of every dictation is in `data/history.jsonl`. **Settings → Keep dictation history** deletes old entries automatically (`history_days`: `0` keeps everything, `-1` saves nothing), and **Clear** empties it.

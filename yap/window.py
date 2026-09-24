@@ -16,6 +16,7 @@ from . import audio, autostart, config, history, textproc
 from .branding import BRAND_NAVY, icon as yap_icon
 from .meeting_notes import transcript_text
 from .meetings import list_meetings, load_meeting, save_meeting
+from .overlay import STYLES as OVERLAY_STYLES
 
 BG = "#0b0d12"
 SIDEBAR = "#0f1218"
@@ -1094,8 +1095,7 @@ class Window:
                           lambda parent: self._keybind_control(parent, "cancel_key"))
         self._divider(card)
         self._setting_row(card, "Speaking visual", "The pill shown near the bottom of your screen.",
-                          lambda parent: Chip(parent, self.app.cfg["overlay_style"].title(), dot=False,
-                                              fill=RAISED, border=BORDER))
+                          self._overlay_style_control)
         self._divider(card)
         self.autostart_var = tk.BooleanVar(self.root, value=autostart.enabled())
         self._setting_row(card, "Start with Windows", "Launch quietly into the tray when you sign in.",
@@ -1346,6 +1346,24 @@ class Window:
 
         note.configure(text="Speak now", fg=MUTED)
         draw()
+
+    def _overlay_style_control(self, parent):
+        var = tk.StringVar(self.root, value=self.app.cfg["overlay_style"].title())
+        box = ttk.Combobox(parent, textvariable=var, values=[s.title() for s in OVERLAY_STYLES], width=11,
+                           font=font(10), style="Yap.TCombobox", state="readonly")
+
+        def chosen(_event=None):
+            style = var.get().lower()
+            if style == self.app.cfg["overlay_style"]:
+                return
+            try:
+                self.app.set_overlay_style(style)
+            except (OSError, ValueError, TypeError) as exc:
+                messagebox.showerror("Could not save setting", str(exc), parent=self.root)
+                var.set(self.app.cfg["overlay_style"].title())
+
+        box.bind("<<ComboboxSelected>>", chosen)
+        return box
 
     def _history_control(self, parent):
         control = tk.Frame(parent, bg=parent.cget("bg"))
