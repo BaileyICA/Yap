@@ -40,10 +40,11 @@ def read_wav(path):
 class MeetingCapture:
     def __init__(self, title, computer_audio=True):
         os.makedirs(MEETINGS_DIR, exist_ok=True)
-        self.id = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        self.created = datetime.now()
+        self.id = self.created.strftime("%Y%m%d-%H%M%S-%f")
         self.folder = os.path.join(MEETINGS_DIR, self.id)
         os.makedirs(self.folder)
-        self.title = title.strip() or datetime.now().strftime("Meeting %d %b %Y, %I:%M %p")
+        self.title = title.strip() or self.created.strftime("Meeting %d %b %Y, %I:%M %p")
         self.computer_audio = computer_audio
         self.mic_path = os.path.join(self.folder, "microphone.wav")
         self.system_path = os.path.join(self.folder, "computer.wav")
@@ -143,7 +144,7 @@ class MeetingCapture:
 
     def _write_meta(self, status, **extra):
         path = os.path.join(self.folder, "meeting.json")
-        data = {"id": self.id, "title": self.title, "created": datetime.now().isoformat(timespec="seconds"),
+        data = {"id": self.id, "title": self.title, "created": self.created.isoformat(timespec="seconds"),
                 "status": status, "computer_audio": self.computer_audio, **extra}
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)

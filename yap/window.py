@@ -378,6 +378,13 @@ class Window:
         self.selected_folder = None
         self.status_text = "Loading speech model..."
         self.detail_tab = "Notes"
+        self.notes_box = None
+        self.name_entries = {}
+        self.saved_names = {}
+        self.title_entry = None
+        self.title_draft = ""
+        self.meeting_status_label = None
+        self.meetings_view = None
         self._ready = threading.Event()
         threading.Thread(target=self._run, daemon=True).start()
         self._ready.wait(5)
@@ -385,8 +392,9 @@ class Window:
     def show(self, page=None):
         self.commands.put(("show", page))
 
-    def update(self, status=None, page=None):
-        self.commands.put(("update", (status, page)))
+    def update(self, status):
+        """Show a status message. Never switches page or rebuilds one the user may be typing in."""
+        self.commands.put(("update", status))
 
     def _run(self):
         global _scale
@@ -532,7 +540,7 @@ class Window:
             return RED, "Needs attention"
         if self.app.meeting_capture or state in ("recording", "meeting"):
             return RED, "Recording"
-        if state in ("loading", "busy", "meeting_starting", "meeting_processing"):
+        if state in ("loading", "busy", "meeting_starting", "meeting_saving") or self.app.meetings_pending:
             return AMBER, "Loading" if state == "loading" else "Working"
         return GREEN, "Ready"
 
@@ -603,6 +611,10 @@ class Window:
         self.root.withdraw()
 
     def _render(self):
+        if self.title_entry is not None and self.title_entry.winfo_exists():
+            self.title_draft = "" if self.title_entry.cget("fg") == FAINT else self.title_entry.get()
+        self.title_entry = None
+        self.meeting_status_label = None
         self._paint_nav()
         self._wheel_handlers = []
         self.root.bind("<MouseWheel>", self._on_wheel)
@@ -821,7 +833,11 @@ class Window:
             entry = tk.Entry(field.body, textvariable=self.title_var, bg=FIELD, fg=FAINT, insertbackground=TEXT,
                              relief="flat", font=font(10), highlightthickness=0, bd=0)
             entry.pack(fill="x", ipady=px(2))
-            entry.insert(0, PLACEHOLDER)
+            if self.title_draft:
+                entry.insert(0, self.title_draft)
+                entry.configure(fg=TEXT)
+            else:
+                entry.insert(0, PLACEHOLDER)
 
             def focus_in(_e):
                 field.repaint(border=ACCENT)
@@ -844,16 +860,18 @@ class Window:
             self.computer_var = tk.BooleanVar(self.root, value=True)
             Switch(toggle, self.computer_var).pack(side="right")
             self._label(toggle, "Include computer audio", 9, MUTED).pack(side="left")
-            if self.app.state in ("meeting_starting", "meeting_processing"):
+            if self.app.state in ("meeting_starting", "meeting_saving"):
                 Chip(box, "Working…", AMBER).pack(anchor="w")
             else:
                 Button(box, "Start recording", self._start, icon=GLYPH["record"]).pack(fill="x")
         if not capture:
-            self._label(box, self.status_text, 8, FAINT, wrap=True).pack(anchor="w", fill="x", pady=(px(10), 0))
+            self.meeting_status_label = self._label(box, self.status_text, 8, FAINT, wrap=True)
+            self.meeting_status_label.pack(anchor="w", fill="x", pady=(px(10), 0))
 
         self._label(left, "SAVED", 8, FAINT, bold=True).pack(anchor="w", padx=px(4), pady=(px(20), px(8)))
         listing = self._scroll_area(left)
         meetings = list_meetings()
+        self.meetings_view = self._meetings_key(meetings)
         for item in meetings:
             self._meeting_row(listing, item, lambda folder=item["folder"]: self._select_meeting(folder),
                               selected=item["folder"] == self.selected_folder)
@@ -865,10 +883,17 @@ class Window:
         self.detail.pack(side="left", fill="both", expand=True)
         self._show_detail()
 
+    def _meetings_key(self, meetings=None):
+        """What the Meetings page shows, so a status message only rebuilds it when this changes."""
+        meetings = list_meetings() if meetings is None else meetings
+        return (self.app.state, self.app.meeting_capture is not None, frozenset(self.app.meetings_pending),
+                tuple((item["folder"], item.get("status")) for item in meetings))
+
     def _start(self):
         title = self.title_var.get()
         if title == PLACEHOLDER and self.title_entry.cget("fg") == FAINT:
             title = ""
+        self.title_draft = ""
         self.app.start_meeting(title, self.computer_var.get())
 
     def _select_meeting(self, folder):
@@ -882,6 +907,7 @@ class Window:
             child.destroy()
         self.notes_box = None
         self.name_entries = {}
+        self.saved_names = {}
         if not self.selected_folder:
             empty = tk.Frame(box, bg=CARD)
             empty.place(relx=0.5, rely=0.45, anchor="center")
@@ -896,6 +922,7 @@ class Window:
             self._show_detail()
             return
 
+        self.saved_names = {k: v for k, v in data.get("speaker_names", {}).items() if v}
         head = tk.Frame(box, bg=CARD)
         head.pack(fill="x")
         actions = tk.Frame(head, bg=CARD)
@@ -920,7 +947,9 @@ class Window:
 
         if data.get("capture_warning"):
             self._banner(box, data["capture_warning"], AMBER)
-        if data.get("status") == "error":
+        if folder in self.app.meetings_pending:
+            self._banner(box, "Processing — notes will appear here when it finishes.", AMBER)
+        elif data.get("status") == "error":
             self._banner(box, data.get("error", "Processing failed"), RED,
                          ("Retry", lambda: self.app.reprocess_meeting(folder), GLYPH["retry"]))
         elif data.get("status") in ("recording", "processing"):
@@ -942,7 +971,7 @@ class Window:
                     tk.Label(inner, text=speaker, bg=FIELD, fg=FAINT, font=font(8)).pack(side="left")
                     e = tk.Entry(inner, bg=FIELD, fg=TEXT, insertbackground=TEXT, relief="flat", width=14,
                                  font=font(9), highlightthickness=0, bd=0)
-                    e.insert(0, data.get("speaker_names", {}).get(speaker, ""))
+                    e.insert(0, self.saved_names.get(speaker, ""))
                     e.pack(side="left", fill="x", expand=True, padx=(px(8), 0))
                     e.bind("<FocusIn>", lambda _e, f=field: f.repaint(border=ACCENT))
                     e.bind("<FocusOut>", lambda _e, f=field: f.repaint(border=BORDER))
@@ -958,6 +987,7 @@ class Window:
         notes_card = Card(pages, fill=FIELD, border=BORDER, radius=12, pad=(4, 4), stretch=True)
         self.notes_box = self._text(notes_card.body)
         self.notes_box.insert("1.0", data.get("notes", "Processing will begin after you stop recording."))
+        self.notes_box.edit_modified(False)
         transcript_card = Card(pages, fill=FIELD, border=BORDER, radius=12, pad=(4, 4), stretch=True)
         transcript = self._text(transcript_card.body)
         transcript.insert("1.0", transcript_text(data.get("turns", []), data.get("speaker_names", {})))
@@ -1021,16 +1051,23 @@ class Window:
     def _save_detail(self):
         if not self.selected_folder or self.notes_box is None or not self.notes_box.winfo_exists():
             return
+        names = {key: field.get().strip() for key, field in self.name_entries.items()
+                 if field.winfo_exists() and field.get().strip()}
+        notes_changed = self.notes_box.edit_modified()
+        if not notes_changed and names == self.saved_names:
+            return  # nothing edited; don't overwrite notes that finished processing in the meantime
         try:
             data = load_meeting(self.selected_folder)
-            data["notes"] = self.notes_box.get("1.0", "end").rstrip()
-            data["speaker_names"] = {key: field.get().strip() for key, field in self.name_entries.items()
-                                     if field.winfo_exists() and field.get().strip()}
+            if notes_changed:
+                data["notes"] = self.notes_box.get("1.0", "end").rstrip()
+            data["speaker_names"] = names
             save_meeting(self.selected_folder, data)
             with open(os.path.join(self.selected_folder, "notes.md"), "w", encoding="utf-8") as f:
                 f.write(data["notes"] + "\n")
             with open(os.path.join(self.selected_folder, "transcript.txt"), "w", encoding="utf-8") as f:
                 f.write(transcript_text(data.get("turns", []), data["speaker_names"]) + "\n")
+            self.notes_box.edit_modified(False)
+            self.saved_names = names
         except (OSError, ValueError) as exc:
             messagebox.showerror("Could not save meeting", str(exc), parent=self.root)
 
@@ -1531,8 +1568,19 @@ class Window:
 
     # ----------------------------------------------------------- loop ----
 
+    def _refresh_status(self):
+        """Update status text in place; rebuild the Meetings page only when its contents changed."""
+        self._paint_nav()
+        if self.page != "Meetings":
+            return
+        if self._meetings_key() != self.meetings_view:
+            self._save_detail()
+            self._render()
+        elif self.meeting_status_label is not None and self.meeting_status_label.winfo_exists():
+            self.meeting_status_label.configure(text=self.status_text)
+
     def _poll(self):
-        changed = False
+        changed = status_changed = False
         try:
             while True:
                 cmd, payload = self.commands.get_nowait()
@@ -1552,16 +1600,15 @@ class Window:
                     self.root.focus_force()
                     changed = True
                 elif cmd == "update":
-                    status, page = payload
-                    if status:
-                        self.status_text = status
-                    if page:
-                        self.page = page
-                    changed = True
+                    self.status_text = payload or self.status_text
+                    status_changed = True
         except queue.Empty:
             pass
         if changed:
+            self._save_detail()
             self._render()
+        elif status_changed:
+            self._refresh_status()
         if self.page == "Meetings" and self.app.meeting_capture:
             label = self.recording_label
             if label and label.winfo_exists() and self.app.meeting_capture.started:

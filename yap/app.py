@@ -55,8 +55,11 @@ class App:
         self.key_capture_callback = None
         self.toggle_hotkey_id = None
         self.meeting_capture = None
+        # Meetings are processed one at a time on their own thread, so dictation keeps working meanwhile.
+        self.meeting_queue = queue.Queue()
+        self.meetings_pending = set()
+        self.meeting_lock = threading.Lock()
         self.model_ready = threading.Event()
-        self.model_lock = threading.Lock()
         self.model_error = None
         self.history_lock = threading.Lock()
 
@@ -220,6 +223,8 @@ class App:
             self.log(f"FATAL: could not load any speech model: {type(e).__name__}: {e}")
             self.overlay.show("info", "Model failed to load")
             self._tray_status("#ff453a", "model failed to load - see data/yap.log")
+            if self.window:
+                self.window.update(f"Speech model failed to load: {e}")
             return
         self.model_ready.set()
         if self.state == "loading":
@@ -236,8 +241,7 @@ class App:
             audio = self.jobs.get()
             t = time.time()
             try:
-                with self.model_lock:
-                    raw = self.tr.transcribe(audio)
+                raw = self.tr.transcribe(audio)
                 text = textproc.clean(raw, self.cfg)
                 text = textproc.polish(text, self.cfg)
                 if text:
@@ -294,7 +298,7 @@ class App:
         if color is None:
             if self.state in ("recording", "meeting"):
                 color = "#ff453a"
-            elif self.state in ("loading", "busy", "meeting_starting", "meeting_processing"):
+            elif self.state in ("loading", "busy", "meeting_starting", "meeting_saving") or self.meetings_pending:
                 color = "#ffd60a"
             else:
                 color = "#30d158" if self.enabled else "#8e8e93"
@@ -302,8 +306,8 @@ class App:
             text = "paused" if not self.enabled else {
                 "loading": "loading model...", "recording": "listening", "busy": "transcribing",
                 "meeting": "recording meeting", "meeting_starting": "starting meeting",
-                "meeting_processing": "processing meeting",
-            }.get(self.state, "ready")
+                "meeting_saving": "saving meeting",
+            }.get(self.state, "processing meeting" if self.meetings_pending else "ready")
         self.tray.icon = _icon(color)
         self.tray.title = f"Yap ({self.tr.device or 'starting'}) - {text}"
 
@@ -314,12 +318,12 @@ class App:
     def start_meeting(self, title, computer_audio=True):
         if self.state != "idle" or self.meeting_capture:
             if self.window:
-                self.window.update("Wait until dictation or the speech model finishes.", "Meetings")
+                self.window.update("Wait until dictation or the speech model finishes.")
             return
         self.state = "meeting_starting"
         self._tray_status()
         if self.window:
-            self.window.update("Starting microphone and computer audio...", "Meetings")
+            self.window.update("Starting microphone and computer audio...")
 
         def begin():
             try:
@@ -329,12 +333,12 @@ class App:
                 self.state = "meeting"
                 self.log(f"Meeting recording started: {capture.folder}")
                 self._tray_status()
-                self.window.update("Recording in progress", "Meetings")
+                self.window.update("Recording in progress")
             except Exception as exc:  # noqa: BLE001
                 self.log(f"Meeting recording failed: {type(exc).__name__}: {exc}")
                 self.state = "idle"
                 self._tray_status()
-                self.window.update(f"Could not start recording: {exc}", "Meetings")
+                self.window.update(f"Could not start recording: {exc}")
 
         threading.Thread(target=begin, daemon=True).start()
 
@@ -343,10 +347,10 @@ class App:
         if not capture:
             return
         self.meeting_capture = None
-        self.state = "meeting_processing"
+        self.state = "meeting_saving"
         self._tray_status()
         if self.window:
-            self.window.update("Saving audio...", "Meetings")
+            self.window.update("Saving audio...")
 
         def finish():
             try:
@@ -355,47 +359,43 @@ class App:
                 self.reprocess_meeting(folder)
             except Exception as exc:  # noqa: BLE001
                 self.log(f"Could not stop meeting: {type(exc).__name__}: {exc}")
-                self.state = "idle"
-                self._tray_status()
-                self.window.update(f"Recording error: {exc}", "Meetings")
-
-        threading.Thread(target=finish, daemon=False).start()
-
-    def reprocess_meeting(self, folder):
-        if self.state not in ("idle", "meeting_processing"):
-            if self.window:
-                self.window.update("Wait until the current recording finishes.", "Meetings")
-            return
-        self.state = "meeting_processing"
-        self._tray_status()
-
-        def process():
-            if self.window:
-                self.window.update("Waiting for speech model...", "Meetings")
-            self.model_ready.wait()
-            if self.model_error:
-                if self.window:
-                    self.window.update(f"Speech model unavailable: {self.model_error}", "Meetings")
-                self.state = "idle"
-                self._tray_status()
-                return
-            try:
-                with self.model_lock:
-                    process_meeting(folder, self.tr, self.cfg,
-                                    progress=lambda msg: self.window.update(msg, "Meetings") if self.window else None,
-                                    log=self.log)
-                self.log(f"Meeting notes ready: {folder}")
-                if self.window:
-                    self.window.update("Meeting notes ready", "Meetings")
-            except Exception as exc:  # noqa: BLE001
-                self.log(f"Meeting processing failed: {type(exc).__name__}: {exc}")
-                if self.window:
-                    self.window.update(f"Meeting processing failed: {exc}", "Meetings")
+                self.window.update(f"Recording error: {exc}")
             finally:
                 self.state = "idle"
                 self._tray_status()
 
-        threading.Thread(target=process, daemon=True).start()
+        threading.Thread(target=finish, daemon=False).start()
+
+    def reprocess_meeting(self, folder):
+        """Queue a saved meeting for transcription and notes; a folder already queued is ignored."""
+        with self.meeting_lock:
+            if folder in self.meetings_pending:
+                return
+            self.meetings_pending.add(folder)
+        self.meeting_queue.put(folder)
+        self._tray_status()
+        if self.window:
+            self.window.update("Waiting for speech model..." if not self.model_ready.is_set() else "Processing meeting...")
+
+    def _meeting_worker(self):
+        progress = lambda msg: self.window.update(msg) if self.window else None  # noqa: E731
+        while True:
+            folder = self.meeting_queue.get()
+            self.model_ready.wait()
+            try:
+                if self.model_error:
+                    progress(f"Speech model unavailable: {self.model_error}")
+                    continue
+                process_meeting(folder, self.tr, self.cfg, progress=progress, log=self.log)
+                self.log(f"Meeting notes ready: {folder}")
+                progress("Meeting notes ready")
+            except Exception as exc:  # noqa: BLE001
+                self.log(f"Meeting processing failed: {type(exc).__name__}: {exc}")
+                progress(f"Meeting processing failed: {exc}")
+            finally:
+                with self.meeting_lock:
+                    self.meetings_pending.discard(folder)
+                self._tray_status()
 
     def _toggle_autostart(self, *_):
         autostart.set_enabled(not autostart.enabled())
@@ -411,6 +411,7 @@ class App:
         self.window = Window(self, visible=show_window)
         threading.Thread(target=_wait_for_open, args=(self.window,), daemon=True).start()
         threading.Thread(target=self.worker, daemon=True).start()
+        threading.Thread(target=self._meeting_worker, daemon=True).start()
         keyboard.hook(self.on_key)
         self.toggle_hotkey_id = keyboard.add_hotkey(self.cfg["toggle_hotkey"], self.on_toggle)
         self.overlay.show("info", "Loading model...")
@@ -492,4 +493,22 @@ def main():
     if _already_running():
         _signal_existing()
         return
-    App().run(show_window="--hidden" not in sys.argv)
+    try:
+        app = App()
+    except config.ConfigError as e:
+        # No console under pythonw/the exe, so say it where the user will see it.
+        _fatal(f"{e}\n\nFix the file (or delete it to go back to the defaults), then start Yap again.")
+        return
+    app.run(show_window="--hidden" not in sys.argv)
+
+
+def _fatal(message):
+    import ctypes
+
+    try:
+        os.makedirs(config.DATA_DIR, exist_ok=True)
+        with open(config.LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} FATAL: {message}\n")
+    except OSError:
+        pass
+    ctypes.windll.user32.MessageBoxW(None, message, "Yap can't start", 0x10)  # MB_ICONERROR

@@ -3,6 +3,8 @@ import time
 import keyboard
 import pyperclip
 
+from . import clipboard
+
 _MODIFIERS = ("ctrl", "alt", "shift", "windows")
 
 
@@ -31,15 +33,14 @@ def insert(text, method="paste"):
         keyboard.write(text, delay=0)
         return
     try:
-        old = pyperclip.paste()
+        old = clipboard.save()  # every format, so a copied image or formatted text survives
     except Exception:  # noqa: BLE001
         old = None
     pyperclip.copy(text)
     time.sleep(0.03)
     keyboard.send("ctrl+v")
     time.sleep(0.25)  # let the target app read the clipboard before we restore it
-    if old:
-        try:
-            pyperclip.copy(old)
-        except Exception:  # noqa: BLE001
-            pass
+    try:
+        clipboard.restore(old)
+    except Exception:  # noqa: BLE001
+        pass

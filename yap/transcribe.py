@@ -1,6 +1,7 @@
 import os
 import sys
 import glob
+import threading
 
 import numpy as np
 
@@ -44,6 +45,7 @@ class Transcriber:
         self.device = None
         self.name = None
         self.beam = 1
+        self._vad_lock = threading.Lock()  # dictation and meeting processing can both reach for it
 
     def load(self):
         if self.engine == "whisper":
@@ -112,16 +114,17 @@ class Transcriber:
 
     def _parakeet_vad(self):
         """Parakeet behind Silero VAD: audio split on pauses, with per-segment token timestamps."""
-        if self.vad is None:
-            import onnxruntime as ort
-            from onnx_asr.loader import Manager
+        with self._vad_lock:
+            if self.vad is None:
+                import onnxruntime as ort
+                from onnx_asr.loader import Manager
 
-            options = ort.SessionOptions()
-            options.intra_op_num_threads = 2
-            vad = Manager(options, ["CPUExecutionProvider"]).create_vad(
-                "silero", os.path.join(config.MODELS_DIR, "silero-vad"), offline=False)
-            self.vad = self.model.with_vad(vad, min_silence_duration_ms=500, max_speech_duration_s=30,
-                                           batch_size=4).with_timestamps()
+                options = ort.SessionOptions()
+                options.intra_op_num_threads = 2
+                vad = Manager(options, ["CPUExecutionProvider"]).create_vad(
+                    "silero", os.path.join(config.MODELS_DIR, "silero-vad"), offline=False)
+                self.vad = self.model.with_vad(vad, min_silence_duration_ms=500, max_speech_duration_s=30,
+                                               batch_size=4).with_timestamps()
         return self.vad
 
     def _parakeet_words(self, audio):

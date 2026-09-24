@@ -84,23 +84,34 @@ def _merge(base, over):
     return out
 
 
+class ConfigError(Exception):
+    """config.json can't be used; the message says where the problem is."""
+
+
+def _read():
+    try:
+        with open(CONFIG_PATH, encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        raise ConfigError(f"{CONFIG_PATH} has a mistake on line {e.lineno}, column {e.colno}: {e.msg}.") from e
+    if not isinstance(data, dict):
+        raise ConfigError(f"{CONFIG_PATH} must hold a JSON object ({{ ... }}).")
+    return data
+
+
 def load():
     os.makedirs(DATA_DIR, exist_ok=True)
     if not os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(DEFAULTS, f, indent=2)
         return copy.deepcopy(DEFAULTS)
-    with open(CONFIG_PATH, encoding="utf-8") as f:
-        return _merge(DEFAULTS, json.load(f))
+    return _merge(DEFAULTS, _read())
 
 
 def save_updates(**updates):
     """Persist top-level settings without discarding custom config entries."""
     os.makedirs(DATA_DIR, exist_ok=True)
-    data = {}
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            data = json.load(f)
+    data = _read() if os.path.exists(CONFIG_PATH) else {}
     data.update(copy.deepcopy(updates))
 
     temporary_path = CONFIG_PATH + ".tmp"
