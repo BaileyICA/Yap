@@ -150,16 +150,21 @@ class Transcriber:
 
     # ---- Whisper (faster-whisper / CTranslate2) ----
     def _load_whisper(self):
+        import ctranslate2
         from faster_whisper import WhisperModel
 
         silence = np.zeros(16000, dtype=np.float32)
         try:
-            self.log(f"Loading {self.cfg['gpu_model']} on GPU...")
+            # faster-whisper downloads before it checks the device; don't fetch the big GPU model for nothing.
+            if ctranslate2.get_cuda_device_count() == 0:
+                raise RuntimeError("no NVIDIA GPU found")
+            self.log(f"Loading {self.cfg['gpu_model']} on GPU (downloads on first run)...")
             m = WhisperModel(self.cfg["gpu_model"], device="cuda", compute_type="float16")
             list(m.transcribe(silence, beam_size=1)[0])  # warm-up; surfaces missing CUDA kernels/DLLs now
             self.model, self.device, self.beam, self.name = m, "cuda", 5, self.cfg["gpu_model"]
         except Exception as e:  # noqa: BLE001
-            self.log(f"GPU unavailable ({type(e).__name__}: {e}); using CPU model {self.cfg['cpu_model']}")
+            self.log(f"GPU unavailable ({type(e).__name__}: {e}); using CPU model {self.cfg['cpu_model']} "
+                     "(downloads on first run)")
             self.model = WhisperModel(
                 self.cfg["cpu_model"], device="cpu", compute_type="int8",
                 cpu_threads=int(self.cfg["cpu_threads"]),
