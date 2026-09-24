@@ -6,7 +6,7 @@ Free, local, offline voice dictation for Windows — a Wispr Flow-style tool. Ho
 
 ### Download the Windows app
 
-Open the repository's **Releases** page, download `Yap-Windows-x64.zip`, extract it, and run `Yap.exe`. Windows may show a SmartScreen prompt because the app is not code-signed; choose **More info → Run anyway** if you trust the download. The app stores settings, logs, history, meetings, and downloaded speaker models in `%LOCALAPPDATA%\Yap`. The speech model downloads on first launch, so allow time and disk space for that download.
+**[Download Yap for Windows](https://github.com/BaileyICA/Yap/releases/latest/download/Yap-Windows-x64.zip)** (latest release; older versions and release notes are on the [Releases page](https://github.com/BaileyICA/Yap/releases)). Extract the ZIP and run `Yap.exe`. Windows may show a SmartScreen prompt because the app is not code-signed; choose **More info → Run anyway** if you trust the download. The app stores settings, logs, history, meetings, and downloaded speaker models in `%LOCALAPPDATA%\Yap`. The speech model downloads on first launch, so allow time and disk space for that download.
 
 Every push to `main` also builds a downloadable ZIP under the GitHub Actions run's **Artifacts**. To publish a version under **Releases**, push a version tag such as `v1.0.0`; the workflow attaches the ZIP to that release.
 
