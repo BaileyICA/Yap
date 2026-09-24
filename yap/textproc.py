@@ -1,3 +1,4 @@
+import difflib
 import json
 import re
 import urllib.request
@@ -122,11 +123,132 @@ def apply_map(text, mapping):
     return text
 
 
+# Everyday words are never snapped to a vocabulary term or suggested as a learned fix:
+# "cloud" must stay "cloud" even with "Claude" in the dictionary.
+_COMMON = set("""
+a about after again all also am an and any are as at back be because been before being but by can come
+could day did do does done down each even first for from get give go going good got had has have he her
+here him his how i if in into is it its just know last let like look made make many may me more most my
+new no not now of off on one only or other our out over people right said same say see she should so
+some take tell than that the their them then there these they thing think this those time to too two up
+us use very want was way we well went were what when where which while who why will with work would
+year yes yet you your
+cloud clod code coat cold called cord court crowd flow floor glow grow lamb late light line might mind
+more nice note open part plan read real ready rest ride right road say see seem send set side sight
+site sort sound start state still stop sure talk team test text than thank then those though told
+try turn wait walk wall wash watch water week while white whole word world write wrong
+""".split())
+_WORD = re.compile(r"[^\W_]+(?:['’][^\W_]+)*")
+_JOINER = re.compile(r"[\s-]+")
+
+
+def _letters(text):
+    return re.sub(r"[\W_]+", "", text).lower()
+
+
+def _sound(text):
+    """Rough phonetic key: consonant skeleton after common English spelling swaps."""
+    s = _letters(text)
+    for a, b in (("sch", "sk"), ("ph", "f"), ("ck", "k"), ("wh", "w"), ("kn", "n"), ("wr", "r"),
+                 ("gh", "g"), ("qu", "kw"), ("dg", "j"), ("q", "k"), ("x", "ks"), ("z", "s")):
+        s = s.replace(a, b)
+    s = re.sub(r"c(?=[eiy])", "s", s).replace("c", "k")
+    s = s[:1] + re.sub(r"[aeiouyhw]", "", s[1:])
+    return re.sub(r"(.)\1+", r"\1", s)
+
+
+def _similar(a, b):
+    return difflib.SequenceMatcher(None, a, b, autojunk=False).ratio()
+
+
+def _vocab_score(heard, term, sentence_start):
+    """How sure we are that `heard` is a mis-hearing of vocabulary `term` (0 = not a match)."""
+    h, t = _letters(heard), _letters(term)
+    if h == t:
+        return 1.0  # same letters, different spacing/case: "open AI" -> "OpenAI"
+    if len(h) < 4 or not 0.7 <= len(h) / len(t) <= 1.4:
+        return 0.0
+    if any(c.isupper() for c in term) and not any(c.isupper() for c in heard):
+        return 0.0  # speech models capitalise names they don't know; lowercase means an ordinary word
+    heard_words = _WORD.findall(heard)
+    if all(w.lower() in _COMMON for w in heard_words) or h == t + "s":
+        return 0.0
+    if len(heard_words) > len(term.split()) and any(w.lower() in _COMMON for w in heard_words):
+        return 0.0  # don't swallow a neighbour: "to Sarah" is not a mis-hearing of "Sarah"
+    score = (_similar(h, t) + _similar(_sound(heard), _sound(term))) / 2
+    # Sentence-initial words are capitalised anyway, so that hint is missing there.
+    return score if score >= (0.9 if sentence_start else 0.8) else 0.0
+
+
+def apply_vocabulary(text, vocabulary):
+    """Snap near-miss spellings to the user's vocabulary: "Greymont" -> "Graymont", "Lamin-X" -> "Laminex"."""
+    terms = [t.strip() for t in vocabulary if len(_letters(t)) >= 3]
+    if not terms:
+        return text
+    words = list(_WORD.finditer(text))
+    out, pos, i = [], 0, 0
+    while i < len(words):
+        before = text[:words[i].start()].rstrip()
+        sentence_start = not before or before[-1] in ".!?\n"
+        best = (0.0, 0, None)
+        for n in (1, 2, 3):  # a term can be heard as more or fewer words than it has
+            span = words[i:i + n]
+            if len(span) < n or any(not _JOINER.fullmatch(text[a.end():b.start()]) for a, b in zip(span, span[1:])):
+                break
+            heard = text[span[0].start():span[-1].end()]
+            suffix = re.search(r"['’]s$", heard)
+            if suffix:
+                heard = heard[:suffix.start()]
+            for term in terms:
+                score = _vocab_score(heard, term, sentence_start)
+                if score > best[0]:
+                    best = (score, n, term + (suffix.group() if suffix else ""))
+        score, n, replacement = best
+        if score:
+            out.append(text[pos:words[i].start()] + replacement)
+            pos = words[i + n - 1].end()
+            i += n
+        else:
+            i += 1
+    return "".join(out) + text[pos:]
+
+
+def fix_words(text, cfg):
+    """The user's dictionary: explicit replacements first, then vocabulary spellings."""
+    text = apply_map(text, cfg["replacements"])
+    return apply_vocabulary(text, cfg["vocabulary"])
+
+
+def learn_corrections(before, after):
+    """Word swaps between a transcript and the user's fixed version, as candidate replacement rules.
+
+    Returns [{"heard", "written", "suggested"}]; `suggested` is False for swaps of everyday words
+    ("their" -> "there"), which are usually grammar fixes rather than mis-hearings.
+    """
+    a, b = list(_WORD.finditer(before)), list(_WORD.finditer(after))
+    matcher = difflib.SequenceMatcher(None, [m.group() for m in a], [m.group() for m in b], autojunk=False)
+    rules = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag != "replace" or i2 - i1 > 3 or j2 - j1 > 3:
+            continue
+        # Equal-length swaps are word-for-word fixes; learn each word on its own.
+        pairs = (zip(range(i1, i2), range(j1, j2)) if i2 - i1 == j2 - j1 else [(i1, j1)])
+        for i, j in pairs:
+            ie, je = (i + 1, j + 1) if i2 - i1 == j2 - j1 else (i2, j2)
+            heard = before[a[i].start():a[ie - 1].end()]
+            written = after[b[j].start():b[je - 1].end()]
+            everyday = all(m.group().lower() in _COMMON for m in a[i:ie])
+            if everyday and heard.lower() == written.lower():
+                continue  # just a capital at a new sentence start
+            rules.append({"heard": heard, "written": written, "suggested": not everyday})
+    return rules
+
+
 def clean(text, cfg):
     text = _SCRATCH.sub("", text)
     if cfg["remove_fillers"]:
         text = _FILLERS.sub("", text)
-    text = apply_map(text, cfg["replacements"])
+    text = fix_words(text, cfg)
     text = apply_map(text, cfg["snippets"])
     text = _apply_corrections(text)
     text = format_list(text)

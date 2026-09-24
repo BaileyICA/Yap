@@ -2,6 +2,8 @@ faster-whisper==1.2.1
 huggingface-hub>=1.0
 keyboard==0.13.5
 numpy>=2.0
+onnx-asr==0.12.0
+# CPU build. For an NVIDIA GPU, swap in requirements-gpu.txt (see README).
 onnxruntime>=1.30
 Pillow>=12.0
 pystray==0.19.5

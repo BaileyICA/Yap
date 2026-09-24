@@ -1,6 +1,6 @@
 # Yap
 
-Free, local, offline voice dictation for Windows — a Wispr Flow-style tool. Hold a hotkey, speak, release: your words are transcribed on your own PC (Whisper on the GPU, CPU fallback) and pasted into whatever app has focus.
+Free, local, offline voice dictation for Windows — a Wispr Flow-style tool. Hold a hotkey, speak, release: your words are transcribed on your own PC (NVIDIA Parakeet on the GPU, CPU fallback; Whisper optional) and pasted into whatever app has focus.
 
 ## Run
 
@@ -21,7 +21,14 @@ Tray icon: green = ready, yellow = loading/processing, red = listening or meetin
 
 Errors are written to `data/yap.log`.
 
-First run downloads the speech model (~1.6 GB for `large-v3-turbo`) once; after that nothing leaves your PC.
+First run downloads the speech model once (Parakeet: ~2.5 GB for the GPU, ~650 MB int8 for CPU); after that nothing leaves your PC.
+
+To use an NVIDIA GPU when running from source, swap ONNX Runtime for its CUDA 12 build:
+
+```
+.venv\Scripts\python -m pip uninstall -y onnxruntime
+.venv\Scripts\python -m pip install -r requirements-gpu.txt
+```
 
 ## Use
 
@@ -37,18 +44,24 @@ Voice commands: "new line", "new paragraph", "scratch that" (drops what you just
 
 ## Settings
 
-Open **Yap → Settings** to choose the GPU speech model and CPU fallback model. Model changes are saved locally and take effect after restarting Yap. Advanced settings remain available in `config.json` (created on first run; restart to apply).
+Open **Yap → Settings** to choose the speech engine (Parakeet or Whisper) and the Whisper models. Engine and model changes take effect after restarting Yap. Advanced settings remain available in `config.json` (created on first run; restart to apply).
 
-- `vocabulary` — names/jargon Whisper should recognise
+- `engine` — `parakeet` (default; fastest and most accurate for English) or `whisper` (other languages)
+- `parakeet_model` — `nemo-parakeet-tdt-0.6b-v2` (English) or `nemo-parakeet-tdt-0.6b-v3` (25 European languages)
+- `vocabulary` — names/jargon to spell your way. Near-misses in a transcript are snapped to these (`Greymont` → `Graymont`, `Lamin-X` → `Laminex`); Whisper also uses them as a hint
 - `replacements` — fix consistent mis-hearings (`"open ai": "OpenAI"`)
 - `snippets` — say a phrase, get a block of text (`"my sign off": "Kind regards,\nBailey"`)
 - `language` — `en`, `fr`, … or `auto`
-- `gpu_model` / `cpu_model` — any faster-whisper model name
+- `gpu_model` / `cpu_model` — any faster-whisper model name (Whisper engine only)
 - `insert_method` — `paste` (fast) or `type`
 - `overlay_style` — speaking visual: `wave`, `bars`, `orb`, or `dots`
 - `polish` — optional AI rewrite (grammar, self-corrections, tone) using a free local LLM through [Ollama](https://ollama.com): install it, `ollama pull llama3.2:3b`, set `"enabled": true`
 
 History of every dictation is in `data/history.jsonl`.
+
+## Teaching Yap your words
+
+**Settings → Dictionary** lists your vocabulary and learned fixes; add or remove entries there and they apply to the next dictation. To teach Yap from a real mistake, open **History**, click the pencil on a dictation, and correct it. Yap compares your version with what it wrote and offers each changed word as a fix (`Taze → Teys`); names are added to the vocabulary too, so similar mis-hearings get caught as well. Swaps of everyday words (`their → there`) are left unticked, since those are usually grammar edits rather than mis-hearings. Neither speech model is retrained: Yap applies your dictionary to the text after transcription, for dictation and meeting transcripts alike.
 
 ## Meeting notes
 
@@ -70,7 +83,7 @@ Scores Whisper turbo, Whisper large-v3 and NVIDIA Parakeet on the same audio aga
 .venv\Scripts\python bench.py --wav x.wav  # any WAV (converted to 16 kHz mono automatically)
 ```
 
-Parakeet lives in its own environment (`.venv-parakeet`, models in `models/`) so it can't disturb the app. It needs ONNX Runtime **1.24.4** (the last CUDA 12 build) to reuse the CUDA libraries in `.venv`; newer ONNX Runtime wants CUDA 13. It is not wired into Yap itself yet: `bench.py` only measures it.
+Parakeet runs from `.venv` (or `.venv-parakeet` if present), with models in `models/`. On the GPU it needs ONNX Runtime **1.24.4** (the last CUDA 12 build; see `requirements-gpu.txt`); newer ONNX Runtime wants CUDA 13. The bench scores the raw model output, before Yap's dictionary is applied.
 
 ## Notes
 

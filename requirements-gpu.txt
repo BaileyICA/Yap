@@ -1,0 +1,11 @@
+# Run Yap's speech models on an NVIDIA GPU (CUDA 12). Install on top of requirements.txt:
+#   .venv\Scripts\python -m pip uninstall -y onnxruntime
+#   .venv\Scripts\python -m pip install -r requirements-gpu.txt
+# ONNX Runtime 1.24.4 is the last CUDA 12 build; newer releases need CUDA 13.
+onnxruntime-gpu==1.24.4
+nvidia-cublas-cu12
+nvidia-cuda-nvrtc-cu12
+nvidia-cuda-runtime-cu12
+nvidia-cudnn-cu12
+nvidia-cufft-cu12
+nvidia-curand-cu12

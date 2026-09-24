@@ -32,7 +32,7 @@ wav, model = sys.argv[1], sys.argv[2]
 audio = read_wav(wav)
 
 cfg = config.load()
-cfg["gpu_model"] = model
+cfg["engine"], cfg["gpu_model"] = "whisper", model
 tr = Transcriber(cfg, log=lambda m: print(m, file=sys.stderr))
 t = time.time()
 tr.load()

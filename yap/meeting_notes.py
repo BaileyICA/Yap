@@ -8,6 +8,7 @@ import urllib.request
 
 import numpy as np
 
+from . import textproc
 from .meetings import read_wav, save_meeting
 from .speakers import assign_speakers
 
@@ -17,25 +18,10 @@ def _stamp(seconds):
     return f"{whole // 60:02d}:{whole % 60:02d}"
 
 
-def _transcribe_track(model, audio, source, cfg, beam_size):
+def _transcribe_track(transcriber, audio, source):
     if len(audio) < 16000 or float(np.sqrt(np.mean(audio ** 2))) < 0.001:
         return []
-    language = cfg.get("language", "en")
-    segments, _ = model.transcribe(
-        audio, language=None if language == "auto" else language,
-        beam_size=beam_size,
-        vad_filter=True, vad_parameters={"min_silence_duration_ms": 500},
-        condition_on_previous_text=False, word_timestamps=True,
-        initial_prompt=", ".join(cfg.get("vocabulary", [])) or None,
-    )
-    words = []
-    for segment in segments:
-        if segment.words:
-            for w in segment.words:
-                if w.word.strip():
-                    words.append((max(0.0, w.start), max(w.start, w.end), w.word))
-        elif segment.text.strip():
-            words.append((segment.start, segment.end, segment.text))
+    words = transcriber.words(audio)
     turns = []
     group = []
     for word in words:
@@ -179,7 +165,7 @@ def generate_notes(turns, cfg, log=print):
     return _basic_notes(turns), "basic"
 
 
-def process_meeting(folder, model, cfg, progress=print, log=print, beam_size=1):
+def process_meeting(folder, transcriber, cfg, progress=print, log=print):
     with open(os.path.join(folder, "meeting.json"), encoding="utf-8") as f:
         data = json.load(f)
     try:
@@ -192,9 +178,10 @@ def process_meeting(folder, model, cfg, progress=print, log=print, beam_size=1):
             progress(f"Transcribing {source} audio...")
             audio = read_wav(path)
             tracks[source] = audio
-            source_turns = _transcribe_track(model, audio, source, cfg, beam_size)
+            source_turns = _transcribe_track(transcriber, audio, source)
             offset = data.get("computer_offset", 0) if source == "computer" else 0
             for turn in source_turns:
+                turn["text"] = textproc.fix_words(turn["text"], cfg)
                 turn["start"] = max(0, round(turn["start"] + offset, 2))
                 turn["end"] = max(turn["start"], round(turn["end"] + offset, 2))
             turns.extend(source_turns)

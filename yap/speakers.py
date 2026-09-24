@@ -6,8 +6,7 @@ import numpy as np
 
 from . import config
 
-MODEL_BASE = config.DATA_DIR if config.FROZEN else os.path.join(config.ROOT, "models")
-MODEL_DIR = os.path.join(MODEL_BASE, "wespeaker")
+MODEL_DIR = os.path.join(config.MODELS_DIR, "wespeaker")
 MODEL_FILE = os.path.join(MODEL_DIR, "voxceleb_resnet34.onnx")
 
 

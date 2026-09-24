@@ -31,6 +31,8 @@ PARAGRAPH = (
 )
 PY_WHISPER = os.path.join(ROOT, ".venv", "Scripts", "python.exe")
 PY_PARAKEET = os.path.join(ROOT, ".venv-parakeet", "Scripts", "python.exe")
+if not os.path.exists(PY_PARAKEET):
+    PY_PARAKEET = PY_WHISPER  # the main venv has onnx-asr now that Yap uses Parakeet
 PARAKEET_DIR = os.path.join(ROOT, "models", "parakeet-tdt-0.6b-v2")
 DEFAULT_ENGINES = "whisper:large-v3-turbo,whisper:large-v3,parakeet"
 

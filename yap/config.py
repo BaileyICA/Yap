@@ -15,6 +15,8 @@ else:
     APP_DATA_DIR = ROOT
     CONFIG_PATH = os.path.join(ROOT, "config.json")
     DATA_DIR = os.path.join(ROOT, "data")
+# Downloaded speech/VAD/speaker models.
+MODELS_DIR = DATA_DIR if FROZEN else os.path.join(ROOT, "models")
 HISTORY_PATH = os.path.join(DATA_DIR, "history.jsonl")
 LOG_PATH = os.path.join(DATA_DIR, "yap.log")
 
@@ -30,7 +32,11 @@ DEFAULTS = {
     "cancel_key": "esc",
     # "en", "fr", ... or "auto" to detect the language each time.
     "language": "en",
-    # GPU model (needs NVIDIA + CUDA). Falls back to cpu_model automatically.
+    # "parakeet" (NVIDIA Parakeet: fast, accurate English) or "whisper" (multilingual).
+    "engine": "parakeet",
+    # onnx-asr model name. "nemo-parakeet-tdt-0.6b-v3" adds 24 other European languages.
+    "parakeet_model": "nemo-parakeet-tdt-0.6b-v2",
+    # Whisper GPU model (needs NVIDIA + CUDA). Falls back to cpu_model automatically.
     "gpu_model": "large-v3-turbo",
     "cpu_model": "small.en",
     "cpu_threads": 8,
@@ -42,7 +48,8 @@ DEFAULTS = {
     "min_recording_seconds": 0.35,
     # Speaking visual: "bars" (soft rounded equalizer, default), "wave", "orb", or "dots".
     "overlay_style": "bars",
-    # Words/names Whisper should get right. Also biases recognition.
+    # Words/names to get right. Near-misses in the transcript are snapped to these
+    # spellings (any engine); Whisper also uses them as a recognition hint.
     "vocabulary": ["Wispr Flow", "OpenAI", "Claude", "Anthropic"],
     # Fix consistent mis-hearings: heard -> replacement.
     "replacements": {"open ai": "OpenAI"},

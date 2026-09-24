@@ -58,6 +58,7 @@ class App:
         self.model_ready = threading.Event()
         self.model_lock = threading.Lock()
         self.model_error = None
+        self.history_lock = threading.Lock()
 
     def log(self, msg):
         line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}"
@@ -258,8 +259,32 @@ class App:
                 self._tray_status()
 
     def _history(self, raw, text):
-        with open(config.HISTORY_PATH, "a", encoding="utf-8") as f:
+        with self.history_lock, open(config.HISTORY_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps({"t": time.strftime("%Y-%m-%d %H:%M:%S"), "raw": raw, "text": text}) + "\n")
+
+    # ---- dictionary ----
+    def update_dictionary(self, vocabulary=None, replacements=None):
+        """Save vocabulary/replacements; the next dictation uses them (the worker reads self.cfg)."""
+        updates = {}
+        if vocabulary is not None:
+            updates["vocabulary"] = list(vocabulary)
+        if replacements is not None:
+            updates["replacements"] = dict(replacements)
+        config.save_updates(**updates)
+        self.cfg.update(updates)
+
+    def learn(self, fixes):
+        """Remember (heard, written) corrections as replacements; new names also join the vocabulary."""
+        replacements = dict(self.cfg["replacements"])
+        vocabulary = list(self.cfg["vocabulary"])
+        known = {word.lower() for word in vocabulary}
+        for heard, written in fixes:
+            replacements[heard.lower()] = written
+            if any(c.isupper() for c in written) and "'" not in written and written.lower() not in known:
+                vocabulary.append(written)
+                known.add(written.lower())
+        self.update_dictionary(vocabulary, replacements)
+        self.log(f"Learned: {', '.join(f'{h!r} -> {w!r}' for h, w in fixes)}")
 
     # ---- tray ----
     def _tray_status(self, color=None, text=None):
@@ -356,9 +381,9 @@ class App:
                 return
             try:
                 with self.model_lock:
-                    process_meeting(folder, self.tr.model, self.cfg,
+                    process_meeting(folder, self.tr, self.cfg,
                                     progress=lambda msg: self.window.update(msg, "Meetings") if self.window else None,
-                                    log=self.log, beam_size=self.tr.beam)
+                                    log=self.log)
                 self.log(f"Meeting notes ready: {folder}")
                 if self.window:
                     self.window.update("Meeting notes ready", "Meetings")

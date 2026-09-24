@@ -12,7 +12,7 @@ from tkinter import font as tkfont, messagebox, ttk
 
 from PIL import Image, ImageDraw, ImageFilter, ImageTk
 
-from . import autostart, config
+from . import autostart, config, textproc
 from .branding import BRAND_NAVY, icon as yap_icon
 from .meeting_notes import transcript_text
 from .meetings import list_meetings, load_meeting, save_meeting
@@ -40,10 +40,12 @@ GLYPH = {
     "record": "", "stop": "", "folder": "", "save": "",
     "keyboard": "", "copy": "", "retry": "",
     "shield": "", "edit": "", "check": "", "chip": "",
+    "close": "", "add": "",
 }
 NAV_ITEMS = ("Home", "Meetings", "History", "Settings")
 PLACEHOLDER = "Meeting title (optional)"
 
+ENGINES = ("Parakeet", "Whisper")
 GPU_MODELS = (
     "large-v3-turbo",
     "large-v3",
@@ -651,7 +653,8 @@ class Window:
         tiles = (
             ("Dictations", str(self._history_count()), GLYPH["keyboard"]),
             ("Meetings", str(len(meetings)), GLYPH["Meetings"]),
-            ("Speech model", self.app.cfg.get("gpu_model", "—"), GLYPH["chip"]),
+            ("Speech model", "Parakeet" if self.app.cfg["engine"] == "parakeet" else self.app.cfg["gpu_model"],
+             GLYPH["chip"]),
         )
         for index, (name, value, glyph) in enumerate(tiles):
             tile = Card(stats, radius=14, pad=(18, 16))
@@ -1056,25 +1059,39 @@ class Window:
         self._setting_row(card, "Start with Windows", "Launch quietly into the tray when you sign in.",
                           lambda parent: Switch(parent, self.autostart_var, self._set_autostart))
         self._divider(card)
-        self._setting_row(card, "Advanced", "Vocabulary, replacements, snippets and more. Restart to apply.",
+        self._setting_row(card, "Advanced", "Snippets, language, AI polish and more. Restart to apply.",
                           lambda parent: Button(parent, "Edit config.json", lambda: os.startfile(config.CONFIG_PATH),
                                                 "secondary", GLYPH["edit"], size=9))
 
+        self._section(page, "Dictionary")
+        dictionary = self._settings_card(page)
+        self._label(dictionary, "Names and words Yap should spell your way. Fixing a dictation in History "
+                                "teaches Yap here automatically. Changes apply to your next dictation.",
+                    9, MUTED, wrap=True).pack(anchor="w", fill="x")
+        self.dictionary_body = tk.Frame(dictionary, bg=CARD)
+        self.dictionary_body.pack(fill="x")
+        self._dictionary()
+
         self._section(page, "Speech model")
         models = self._settings_card(page)
-        self._label(models, "Larger models are more accurate, but need more memory and take longer to load.",
+        self._label(models, "Parakeet is the fastest and most accurate for English. Whisper also understands "
+                            "other languages; its larger models are more accurate but slower to load.",
                     9, MUTED, wrap=True).pack(anchor="w", fill="x", pady=(0, px(14)))
         fields = tk.Frame(models, bg=CARD)
         fields.pack(fill="x")
-        fields.grid_columnconfigure((0, 1), weight=1, uniform="models")
+        fields.grid_columnconfigure((0, 1, 2), weight=1, uniform="models")
+        self.engine_var = tk.StringVar(self.root, value=self.app.cfg["engine"].title())
         self.gpu_model_var = tk.StringVar(self.root, value=self.app.cfg["gpu_model"])
         self.cpu_model_var = tk.StringVar(self.root, value=self.app.cfg["cpu_model"])
-        for column, (name, var, values) in enumerate((("NVIDIA GPU model", self.gpu_model_var, GPU_MODELS),
-                                                      ("CPU fallback model", self.cpu_model_var, CPU_MODELS))):
+        for column, (name, var, values, state) in enumerate((
+                ("Engine", self.engine_var, ENGINES, "readonly"),
+                ("Whisper GPU model", self.gpu_model_var, GPU_MODELS, "normal"),
+                ("Whisper CPU model", self.cpu_model_var, CPU_MODELS, "normal"))):
             field = tk.Frame(fields, bg=CARD)
-            field.grid(row=0, column=column, sticky="ew", padx=(0, px(8)) if column == 0 else (px(8), 0))
+            field.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else px(8), 0 if column == 2 else px(8)))
             self._label(field, name, 9, MUTED, bold=True).pack(anchor="w", pady=(0, px(6)))
-            ttk.Combobox(field, textvariable=var, values=values, font=font(10), style="Yap.TCombobox").pack(fill="x")
+            ttk.Combobox(field, textvariable=var, values=values, font=font(10), style="Yap.TCombobox",
+                         state=state).pack(fill="x")
         actions = tk.Frame(models, bg=CARD)
         actions.pack(fill="x", pady=(px(16), 0))
         Button(actions, "Save models", self._save_models, icon=GLYPH["save"], size=9).pack(side="right")
@@ -1215,25 +1232,144 @@ class Window:
             self.autostart_var.set(autostart.enabled())
 
     def _save_models(self):
+        engine = self.engine_var.get().strip().lower()
         gpu_model = self.gpu_model_var.get().strip()
         cpu_model = self.cpu_model_var.get().strip()
         if not gpu_model or not cpu_model:
             messagebox.showerror("Could not save models", "Choose both a GPU model and a CPU fallback model.", parent=self.root)
             return
         try:
-            config.save_updates(gpu_model=gpu_model, cpu_model=cpu_model)
+            config.save_updates(engine=engine, gpu_model=gpu_model, cpu_model=cpu_model)
         except (OSError, ValueError, TypeError) as exc:
             messagebox.showerror("Could not save models", str(exc), parent=self.root)
             return
+        self.app.cfg["engine"] = engine
         self.app.cfg["gpu_model"] = gpu_model
         self.app.cfg["cpu_model"] = cpu_model
         self.model_save_status.configure(text="Saved — restart Yap to load the new model.", fg=GREEN)
+
+    # ----------------------------------------------------- dictionary ----
+
+    def _dictionary(self):
+        """(Re)build the vocabulary chips and learned fixes inside the Dictionary card."""
+        body = self.dictionary_body
+        for child in body.winfo_children():
+            child.destroy()
+        cfg = self.app.cfg
+
+        self._label(body, "WORDS", 8, FAINT, bold=True).pack(anchor="w", pady=(px(16), px(8)))
+        flow = tk.Frame(body, bg=CARD, height=1)
+        flow.pack(fill="x")
+        chips = []
+        for word in cfg["vocabulary"]:
+            chip = tk.Frame(flow, bg=CARD)
+            Chip(chip, word, dot=False, fill=RAISED, border=BORDER).pack(side="left")
+            Button(chip, "", lambda w=word: self._remove_word(w), "ghost", GLYPH["close"], size=8).pack(
+                side="left", padx=(px(1), 0))
+            chips.append(chip)
+        if not cfg["vocabulary"]:
+            self._label(flow, "No words yet.", 9, FAINT).pack(anchor="w")
+
+        def reflow(_event=None):
+            """Wrap the chips onto new rows as the window narrows."""
+            x = y = row = 0
+            for chip in chips:
+                w, h = chip.winfo_reqwidth(), chip.winfo_reqheight()
+                if x and x + w > flow.winfo_width():
+                    x, y, row = 0, y + row + px(6), 0
+                chip.place(x=x, y=y)
+                x, row = x + w + px(10), max(row, h)
+            if chips and int(flow.cget("height")) != y + row:
+                flow.configure(height=y + row)
+
+        flow.bind("<Configure>", reflow)
+
+        add_word = tk.Frame(body, bg=CARD)
+        add_word.pack(fill="x", pady=(px(10), 0))
+        word_field, word_entry = self._entry(add_word, "Add a name or word, e.g. Graymont")
+        word_field.pack(side="left", fill="x", expand=True, padx=(0, px(10)))
+        add = lambda: self._add_word(self._entry_value(word_entry))  # noqa: E731
+        word_entry.bind("<Return>", lambda _e: add())
+        Button(add_word, "Add", add, "secondary", GLYPH["add"], size=9).pack(side="right")
+
+        self._label(body, "LEARNED FIXES", 8, FAINT, bold=True).pack(anchor="w", pady=(px(20), px(6)))
+        for heard, written in cfg["replacements"].items():
+            row = tk.Frame(body, bg=CARD)
+            row.pack(fill="x", pady=px(1))
+            Button(row, "", lambda h=heard: self._remove_fix(h), "ghost", GLYPH["close"], size=8).pack(side="right")
+            self._label(row, heard, 10, MUTED).pack(side="left")
+            self._label(row, "  →  ", 10, FAINT).pack(side="left")
+            self._label(row, written.replace("\n", " ⏎ "), 10).pack(side="left")
+        if not cfg["replacements"]:
+            self._label(body, "None yet. Fix a dictation in History, or add one below.", 9, FAINT).pack(anchor="w")
+
+        add_fix = tk.Frame(body, bg=CARD)
+        add_fix.pack(fill="x", pady=(px(10), 0))
+        heard_field, heard_entry = self._entry(add_fix, "Yap hears…")
+        heard_field.pack(side="left", fill="x", expand=True, padx=(0, px(8)))
+        written_field, written_entry = self._entry(add_fix, "Write it as…")
+        written_field.pack(side="left", fill="x", expand=True, padx=(0, px(10)))
+        add_fix_cmd = lambda: self._add_fix(self._entry_value(heard_entry), self._entry_value(written_entry))  # noqa: E731
+        written_entry.bind("<Return>", lambda _e: add_fix_cmd())
+        Button(add_fix, "Add", add_fix_cmd, "secondary", GLYPH["add"], size=9).pack(side="right")
+
+    def _entry(self, parent, placeholder):
+        """A rounded one-line field with grey placeholder text. Returns (card to pack, entry)."""
+        field = Card(parent, fill=FIELD, border=BORDER, radius=10, pad=(12, 7))
+        entry = tk.Entry(field.body, bg=FIELD, fg=FAINT, insertbackground=TEXT, relief="flat", font=font(10),
+                         highlightthickness=0, bd=0)
+        entry.pack(fill="x", ipady=px(2))
+        entry.insert(0, placeholder)
+
+        def focus_in(_e):
+            field.repaint(border=ACCENT)
+            if entry.cget("fg") == FAINT:
+                entry.delete(0, "end")
+                entry.configure(fg=TEXT)
+
+        def focus_out(_e):
+            field.repaint(border=BORDER)
+            if not entry.get():
+                entry.insert(0, placeholder)
+                entry.configure(fg=FAINT)
+
+        entry.bind("<FocusIn>", focus_in)
+        entry.bind("<FocusOut>", focus_out)
+        return field, entry
+
+    @staticmethod
+    def _entry_value(entry):
+        return "" if entry.cget("fg") == FAINT else entry.get().strip()
+
+    def _save_dictionary(self, **changes):
+        try:
+            self.app.update_dictionary(**changes)
+        except (OSError, ValueError, TypeError) as exc:
+            messagebox.showerror("Could not save dictionary", str(exc), parent=self.root)
+            return
+        if getattr(self, "dictionary_body", None) is not None and self.dictionary_body.winfo_exists():
+            self._dictionary()
+
+    def _add_word(self, word):
+        vocabulary = self.app.cfg["vocabulary"]
+        if word and word.lower() not in {w.lower() for w in vocabulary}:
+            self._save_dictionary(vocabulary=vocabulary + [word])
+
+    def _remove_word(self, word):
+        self._save_dictionary(vocabulary=[w for w in self.app.cfg["vocabulary"] if w != word])
+
+    def _add_fix(self, heard, written):
+        if heard and written:
+            self._save_dictionary(replacements={**self.app.cfg["replacements"], heard.lower(): written})
+
+    def _remove_fix(self, heard):
+        self._save_dictionary(replacements={h: w for h, w in self.app.cfg["replacements"].items() if h != heard})
 
     # -------------------------------------------------------- history ----
 
     def _history(self):
         page = self._scroll_area(self.main)
-        self._header(page, "Dictation history", "Recent speech converted to text. Click copy to reuse it.")
+        self._header(page, "Dictation history", "Recent speech converted to text. Copy to reuse it, or use the pencil to fix a mistake and teach Yap.")
         try:
             with open(config.HISTORY_PATH, encoding="utf-8") as f:
                 lines = f.readlines()[-100:]
@@ -1267,12 +1403,116 @@ class Window:
         side = tk.Frame(row, bg=CARD)
         side.pack(side="right", anchor="n")
         copy = Button(side, "", lambda: self._copy(text, copy), "ghost", GLYPH["copy"], size=10)
-        copy.pack()
+        copy.pack(side="left")
+        Button(side, "", lambda: self._fix_entry(item), "ghost", GLYPH["edit"], size=10).pack(side="left")
         stamp = item.get("t", "")
         self._label(row, _when(stamp).split(", ")[-1] if stamp else "", 8, FAINT).pack(anchor="w")
         body = tk.Frame(row, bg=CARD)
         body.pack(side="left", fill="x", expand=True, padx=(0, px(12)))
         self._label(body, text, 10, wrap=True).pack(anchor="w", fill="x", pady=(px(2), 0))
+
+    def _fix_entry(self, item):
+        """Let the user correct a dictation, then offer to learn the words they changed."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Fix transcription")
+        dialog.configure(bg=CARD)
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.minsize(px(520), 1)
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        body = tk.Frame(dialog, bg=CARD, padx=px(24), pady=px(20))
+        body.pack(fill="both", expand=True)
+        self._label(body, "Fix what Yap got wrong", 12, bold=True, display=True).pack(anchor="w")
+        self._label(body, "Edit the text below. Yap will offer to learn the words you change.", 9, MUTED,
+                    wrap=True).pack(anchor="w", fill="x", pady=(px(6), px(14)))
+        box_card = Card(body, fill=FIELD, border=BORDER, radius=10, pad=(3, 3))
+        box_card.pack(fill="x")
+        box = self._text(box_card.body)
+        box.configure(height=6)
+        box.insert("1.0", item.get("text", ""))
+        box.focus_set()
+        actions = tk.Frame(body, bg=CARD)
+        actions.pack(fill="x", pady=(px(16), 0))
+
+        def save():
+            fixed = box.get("1.0", "end").strip()
+            if not fixed or fixed == item.get("text", ""):
+                dialog.destroy()
+                return
+            try:
+                self._rewrite_history(item, fixed)
+            except (OSError, ValueError) as exc:
+                messagebox.showerror("Could not save", str(exc), parent=dialog)
+                return
+            rules = textproc.learn_corrections(item.get("text", ""), fixed)
+            item["text"] = fixed
+            if rules:
+                self._offer_fixes(dialog, body, rules)
+            else:
+                dialog.destroy()
+                self._render()
+
+        Button(actions, "Save", save, icon=GLYPH["save"], size=9).pack(side="right")
+        Button(actions, "Cancel", dialog.destroy, "secondary", size=9).pack(side="right", padx=(0, px(8)))
+        dialog.update_idletasks()
+        _dark_title_bar(dialog)
+
+    def _offer_fixes(self, dialog, body, rules):
+        for child in body.winfo_children():
+            child.destroy()
+        self._label(body, "Learn these fixes?", 12, bold=True, display=True).pack(anchor="w")
+        self._label(body, "Yap will write it your way next time. Names are added to your dictionary too. "
+                          "Everyday-word swaps are left off, since they are usually grammar fixes.",
+                    9, MUTED, wrap=True).pack(anchor="w", fill="x", pady=(px(6), px(14)))
+        choices = []
+        for rule in rules:
+            row = tk.Frame(body, bg=CARD)
+            row.pack(fill="x", pady=px(3))
+            var = tk.BooleanVar(self.root, value=rule["suggested"])
+            Switch(row, var).pack(side="left", padx=(0, px(12)))
+            self._label(row, rule["heard"], 10, MUTED).pack(side="left")
+            self._label(row, "  →  ", 10, FAINT).pack(side="left")
+            self._label(row, rule["written"], 10, bold=True).pack(side="left")
+            choices.append((var, rule))
+        actions = tk.Frame(body, bg=CARD)
+        actions.pack(fill="x", pady=(px(18), 0))
+
+        def finish(learn):
+            fixes = [(rule["heard"], rule["written"]) for var, rule in choices if var.get()]
+            if learn and fixes:
+                try:
+                    self.app.learn(fixes)
+                except (OSError, ValueError, TypeError) as exc:
+                    messagebox.showerror("Could not save dictionary", str(exc), parent=dialog)
+                    return
+            dialog.destroy()
+            self._render()
+
+        Button(actions, "Learn", lambda: finish(True), icon=GLYPH["check"], size=9).pack(side="right")
+        Button(actions, "Not now", lambda: finish(False), "secondary", size=9).pack(side="right", padx=(0, px(8)))
+
+    def _rewrite_history(self, item, text):
+        """Replace one dictation's text in history.jsonl, keeping what the model originally heard."""
+        with self.app.history_lock:
+            with open(config.HISTORY_PATH, encoding="utf-8") as f:
+                lines = f.readlines()
+            for index in range(len(lines) - 1, -1, -1):
+                try:
+                    entry = json.loads(lines[index])
+                except ValueError:
+                    continue
+                if entry.get("t") == item.get("t") and entry.get("text") == item.get("text"):
+                    entry["text"] = text
+                    entry["fixed"] = True
+                    lines[index] = json.dumps(entry) + "\n"
+                    break
+            else:
+                raise ValueError("That dictation is no longer in the history file.")
+            temporary = config.HISTORY_PATH + ".tmp"
+            with open(temporary, "w", encoding="utf-8") as f:
+                f.writelines(lines)
+            os.replace(temporary, config.HISTORY_PATH)
 
     def _copy(self, text, button):
         self.root.clipboard_clear()

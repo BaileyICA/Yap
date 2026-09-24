@@ -6,7 +6,7 @@ binaries = []
 hiddenimports = ["PIL._tkinter_finder", "sounddevice", "soundcard"]
 
 # These libraries load native extensions and model support dynamically.
-for package in ("ctranslate2", "faster_whisper", "onnxruntime", "soundcard"):
+for package in ("ctranslate2", "faster_whisper", "onnx_asr", "onnxruntime", "soundcard"):
     package_datas, package_binaries, package_hiddenimports = collect_all(package)
     datas += package_datas
     binaries += package_binaries

@@ -29,7 +29,7 @@ def check(name, fn):
 
 def _config():
     cfg = config.load()
-    return f"hold={cfg['hold_hotkey']}  toggle={cfg['toggle_hotkey']}  model={cfg['gpu_model']}/{cfg['cpu_model']}"
+    return f"hold={cfg['hold_hotkey']}  toggle={cfg['toggle_hotkey']}  engine={cfg['engine']}"
 
 
 def _mic():
@@ -89,7 +89,7 @@ def _model():
     # 3 seconds of silence: must come back empty, not hallucinated text.
     t = time.time()
     out = tr.transcribe(np.zeros(16000 * 3, dtype=np.float32))
-    return f"device={tr.device}  load={load:.1f}s  silence->{out!r} in {time.time() - t:.2f}s"
+    return f"{tr.name} on {tr.device}  load={load:.1f}s  silence->{out!r} in {time.time() - t:.2f}s"
 
 
 check("config.json", _config)
