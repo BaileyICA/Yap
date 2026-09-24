@@ -10,10 +10,10 @@ import wave
 from datetime import datetime
 
 import numpy as np
-import sounddevice as sd
 import soundcard as sc
 
 from . import config
+from .audio import open_input
 
 RATE = 16000
 MEETINGS_DIR = os.path.join(config.DATA_DIR, "meetings")
@@ -39,7 +39,7 @@ def read_wav(path):
 
 
 class MeetingCapture:
-    def __init__(self, title, computer_audio=True):
+    def __init__(self, title, computer_audio=True, microphone="", log=None):
         os.makedirs(MEETINGS_DIR, exist_ok=True)
         self.created = datetime.now()
         self.id = self.created.strftime("%Y%m%d-%H%M%S-%f")
@@ -47,6 +47,8 @@ class MeetingCapture:
         os.makedirs(self.folder)
         self.title = title.strip() or self.created.strftime("Meeting %d %b %Y, %I:%M %p")
         self.computer_audio = computer_audio
+        self.microphone = microphone
+        self.log = log
         self.mic_path = os.path.join(self.folder, "microphone.wav")
         self.system_path = os.path.join(self.folder, "computer.wav")
         self._mic_queue = queue.Queue()
@@ -85,8 +87,7 @@ class MeetingCapture:
         def mic_callback(indata, _frames, _time_info, _status):
             self._mic_queue.put(indata[:, 0].copy())
 
-        self._mic_stream = sd.InputStream(samplerate=RATE, channels=1, dtype="float32", callback=mic_callback)
-        self._mic_stream.start()
+        self._mic_stream = open_input(self.microphone, mic_callback, self.log)
         self.started = time.monotonic()
         t = threading.Thread(target=self._write_mic, daemon=True)
         t.start()

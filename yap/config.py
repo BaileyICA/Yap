@@ -30,6 +30,8 @@ DEFAULTS = {
     # Extra single-shortcut alternative: press once to start hands-free, again to stop.
     "toggle_hotkey": "ctrl+alt+space",
     "cancel_key": "esc",
+    # Microphone name from Settings; "" uses the Windows default input.
+    "microphone": "",
     # "en", "fr", ... or "auto" to detect the language each time.
     "language": "en",
     # "parakeet" (NVIDIA Parakeet: fast, accurate English) or "whisper" (multilingual).

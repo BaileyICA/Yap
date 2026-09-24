@@ -9,9 +9,10 @@ import tkinter as tk
 from datetime import datetime
 from tkinter import font as tkfont, messagebox, ttk
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageTk
 
-from . import autostart, config, history, textproc
+from . import audio, autostart, config, history, textproc
 from .branding import BRAND_NAVY, icon as yap_icon
 from .meeting_notes import transcript_text
 from .meetings import list_meetings, load_meeting, save_meeting
@@ -43,6 +44,7 @@ GLYPH = {
 }
 NAV_ITEMS = ("Home", "Meetings", "History", "Settings")
 PLACEHOLDER = "Meeting title (optional)"
+DEFAULT_MIC = "Windows default"
 
 ENGINES = ("Parakeet", "Whisper")
 GPU_MODELS = (
@@ -384,6 +386,7 @@ class Window:
         self.title_draft = ""
         self.meeting_status_label = None
         self.meetings_view = None
+        self.mic_test = None
         self._ready = threading.Event()
         threading.Thread(target=self._run, daemon=True).start()
         self._ready.wait(5)
@@ -1078,6 +1081,9 @@ class Window:
 
         self._section(page, "Dictation", pady=(0, px(10)))
         card = self._settings_card(page)
+        self._setting_row(card, "Microphone", "Used for dictation and meeting recordings.",
+                          self._microphone_control)
+        self._divider(card)
         self._setting_row(card, "Hold to dictate", "Keep held while you speak, release to paste.",
                           lambda parent: self._keybind_control(parent, "hold_hotkey"))
         self._divider(card)
@@ -1255,6 +1261,91 @@ class Window:
         Button(control, "Change", edit, "secondary", GLYPH["keyboard"], size=9).pack(side="right")
         refresh()
         return control
+
+    def _microphone_control(self, parent):
+        control = tk.Frame(parent, bg=parent.cget("bg"))
+        saved = self.app.cfg["microphone"]
+        var = tk.StringVar(self.root, value=saved or DEFAULT_MIC)
+
+        def options():
+            # Re-scan so a headset plugged in after launch appears, but never under an open stream.
+            if self.app.state == "idle" and not self.app.meeting_capture and not self.mic_test:
+                try:
+                    audio.refresh()
+                except Exception as exc:  # noqa: BLE001
+                    self.app.log(f"Could not re-scan microphones: {exc}")
+            try:
+                names = audio.microphones()
+            except Exception as exc:  # noqa: BLE001
+                self.app.log(f"Could not list microphones: {exc}")
+                names = []
+            current = self.app.cfg["microphone"]
+            if current and current not in names:
+                names.append(current)  # unplugged right now; keep it choosable
+            box.configure(values=[DEFAULT_MIC] + names)
+
+        box = ttk.Combobox(control, textvariable=var, width=30, font=font(10), style="Yap.TCombobox",
+                           state="readonly", postcommand=options)
+        box.pack(side="left", padx=(0, px(10)))
+
+        def chosen(_event=None):
+            name = "" if var.get() == DEFAULT_MIC else var.get()
+            try:
+                self.app.set_microphone(name)
+            except (OSError, ValueError, TypeError) as exc:
+                messagebox.showerror("Could not save microphone", str(exc), parent=self.root)
+                var.set(self.app.cfg["microphone"] or DEFAULT_MIC)
+
+        box.bind("<<ComboboxSelected>>", chosen)
+        Button(control, "Test", lambda: self._test_microphone(meter, note), "secondary", size=9).pack(side="left")
+        meter = tk.Canvas(control, width=px(64), height=px(8), bg=RAISED, highlightthickness=0, bd=0)
+        meter.pack(side="left", padx=(px(10), 0))
+        note = self._label(control, "", 8, FAINT)
+        note.configure(width=9)
+        note.pack(side="left", padx=(px(8), 0))
+        options()
+        return control
+
+    def _test_microphone(self, meter, note):
+        """Show the chosen microphone's input level for a few seconds."""
+        if self.mic_test:
+            return
+        level = {"now": 0.0, "peak": 0.0}
+
+        def callback(indata, _frames, _time, _status):
+            rms = float(np.sqrt(np.mean(indata[:, 0] ** 2)))
+            level["now"] = rms
+            level["peak"] = max(level["peak"], rms)
+
+        try:
+            self.mic_test = audio.open_input(self.app.cfg["microphone"], callback, self.app.log)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Microphone unavailable", str(exc), parent=self.root)
+            return
+        ends = time.monotonic() + 4
+        shown = {"value": 0.0}
+
+        def draw():
+            alive = meter.winfo_exists()
+            if not alive or time.monotonic() >= ends:
+                self.mic_test.stop()
+                self.mic_test.close()
+                self.mic_test = None
+                if alive:
+                    meter.delete("all")
+                    heard = level["peak"] > 0.01
+                    note.configure(text="Heard you" if heard else "No sound", fg=GREEN if heard else AMBER)
+                return
+            target = min(1.0, (level["now"] * 16) ** 0.6)
+            shown["value"] += (target - shown["value"]) * (0.6 if target > shown["value"] else 0.15)
+            width = int(meter.winfo_width() * shown["value"])
+            meter.delete("all")
+            if width:
+                meter.create_rectangle(0, 0, width, meter.winfo_height(), fill=GREEN, width=0)
+            self.root.after(40, draw)
+
+        note.configure(text="Speak now", fg=MUTED)
+        draw()
 
     def _history_control(self, parent):
         control = tk.Frame(parent, bg=parent.cget("bg"))

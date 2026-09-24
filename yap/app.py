@@ -34,7 +34,8 @@ class App:
     def __init__(self):
         self.cfg = config.load()
         self.overlay = Overlay(self.cfg["overlay_style"])
-        self.recorder = Recorder(on_level=self.overlay.level)
+        self.recorder = Recorder(on_level=self.overlay.level, log=self.log)
+        self.recorder.microphone = self.cfg["microphone"]
         self.tr = Transcriber(self.cfg, log=self.log)
         self.hold = _combo(self.cfg["hold_hotkey"])
         self.cancel = _combo(self.cfg["cancel_key"])
@@ -266,6 +267,12 @@ class App:
         self.cfg["history_days"] = days
         return history.prune(days)
 
+    def set_microphone(self, name):
+        """Use this microphone ("" = Windows default) from the next recording on."""
+        config.save_updates(microphone=name)
+        self.cfg["microphone"] = name
+        self.recorder.microphone = name
+
     # ---- dictionary ----
     def update_dictionary(self, vocabulary=None, replacements=None):
         """Save vocabulary/replacements; the next dictation uses them (the worker reads self.cfg)."""
@@ -327,7 +334,7 @@ class App:
 
         def begin():
             try:
-                capture = MeetingCapture(title, computer_audio)
+                capture = MeetingCapture(title, computer_audio, self.cfg["microphone"], self.log)
                 capture.start()
                 self.meeting_capture = capture
                 self.state = "meeting"

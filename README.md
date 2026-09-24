@@ -46,6 +46,7 @@ Voice commands: "new line", "new paragraph", "scratch that" (drops what you just
 
 Open **Yap → Settings** to choose the speech engine (Parakeet or Whisper) and the Whisper models. Engine and model changes take effect after restarting Yap. Advanced settings remain available in `config.json` (created on first run; restart to apply).
 
+- `microphone` — the input to record from (pick it under **Settings → Microphone**, with a **Test** level meter); empty uses the Windows default, and Yap falls back to the default if the chosen mic is unplugged
 - `engine` — `parakeet` (default; fastest and most accurate for English) or `whisper` (other languages)
 - `parakeet_model` — `nemo-parakeet-tdt-0.6b-v2` (English) or `nemo-parakeet-tdt-0.6b-v3` (25 European languages)
 - `vocabulary` — names/jargon to spell your way. Near-misses in a transcript are snapped to these (`Greymont` → `Graymont`, `Lamin-X` → `Laminex`); Whisper also uses them as a hint
