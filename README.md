@@ -58,7 +58,7 @@ Open **Yap → Settings** to choose the speech engine (Parakeet or Whisper) and 
 - `overlay_style` — speaking visual: `wave`, `bars`, `orb`, or `dots`
 - `polish` — optional AI rewrite (grammar, self-corrections, tone) using a free local LLM through [Ollama](https://ollama.com): install it, `ollama pull llama3.2:3b`, set `"enabled": true`
 
-History of every dictation is in `data/history.jsonl`.
+History of every dictation is in `data/history.jsonl`. **Settings → Keep dictation history** deletes old entries automatically (`history_days`: `0` keeps everything, `-1` saves nothing), and **Clear** empties it.
 
 ## Teaching Yap your words
 

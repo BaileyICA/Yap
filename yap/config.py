@@ -48,6 +48,8 @@ DEFAULTS = {
     "numbers_as_digits": True,
     "beep": False,
     "min_recording_seconds": 0.35,
+    # Days of dictation history to keep: 0 keeps everything, -1 saves none.
+    "history_days": 0,
     # Speaking visual: "bars" (soft rounded equalizer, default), "wave", "orb", or "dots".
     "overlay_style": "bars",
     # Words/names to get right. Near-misses in the transcript are snapped to these

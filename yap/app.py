@@ -1,4 +1,3 @@
-import json
 import os
 import queue
 import sys
@@ -8,7 +7,7 @@ import winsound
 
 import keyboard
 import pystray
-from . import autostart, config, textproc
+from . import autostart, config, history, textproc
 from .audio import Recorder, SAMPLE_RATE
 from .branding import icon as _icon
 from .inject import insert
@@ -61,7 +60,6 @@ class App:
         self.meeting_lock = threading.Lock()
         self.model_ready = threading.Event()
         self.model_error = None
-        self.history_lock = threading.Lock()
 
     def log(self, msg):
         line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}"
@@ -248,7 +246,7 @@ class App:
                     if self.cfg["add_trailing_space"]:
                         text += " "
                     insert(text, self.cfg["insert_method"])
-                    self._history(raw, text)
+                    history.append(raw, text, self.cfg["history_days"])
                     self.overlay.show("done", "Done")
                 else:
                     self.overlay.show("info", "Nothing heard")
@@ -262,9 +260,11 @@ class App:
                 self.overlay.hide()
                 self._tray_status()
 
-    def _history(self, raw, text):
-        with self.history_lock, open(config.HISTORY_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"t": time.strftime("%Y-%m-%d %H:%M:%S"), "raw": raw, "text": text}) + "\n")
+    def set_history_days(self, days):
+        """Save the history retention setting and apply it now. Returns how many entries were removed."""
+        config.save_updates(history_days=days)
+        self.cfg["history_days"] = days
+        return history.prune(days)
 
     # ---- dictionary ----
     def update_dictionary(self, vocabulary=None, replacements=None):
@@ -408,6 +408,10 @@ class App:
             os.system(f'notepad.exe "{path}"')
 
     def run(self, show_window=True):
+        try:
+            history.prune(self.cfg["history_days"])
+        except OSError as e:
+            self.log(f"Could not prune history: {e}")
         self.window = Window(self, visible=show_window)
         threading.Thread(target=_wait_for_open, args=(self.window,), daemon=True).start()
         threading.Thread(target=self.worker, daemon=True).start()

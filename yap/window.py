@@ -1,7 +1,6 @@
 """Yap's desktop home and meeting review window."""
 
 import ctypes
-import json
 import os
 import queue
 import threading
@@ -12,7 +11,7 @@ from tkinter import font as tkfont, messagebox, ttk
 
 from PIL import Image, ImageDraw, ImageFilter, ImageTk
 
-from . import autostart, config, textproc
+from . import autostart, config, history, textproc
 from .branding import BRAND_NAVY, icon as yap_icon
 from .meeting_notes import transcript_text
 from .meetings import list_meetings, load_meeting, save_meeting
@@ -1096,6 +1095,9 @@ class Window:
         self._setting_row(card, "Start with Windows", "Launch quietly into the tray when you sign in.",
                           lambda parent: Switch(parent, self.autostart_var, self._set_autostart))
         self._divider(card)
+        self._setting_row(card, "Keep dictation history", "Older dictations are deleted automatically.",
+                          self._history_control)
+        self._divider(card)
         self._setting_row(card, "Advanced", "Snippets, language, AI polish and more. Restart to apply.",
                           lambda parent: Button(parent, "Edit config.json", lambda: os.startfile(config.CONFIG_PATH),
                                                 "secondary", GLYPH["edit"], size=9))
@@ -1254,6 +1256,45 @@ class Window:
         refresh()
         return control
 
+    def _history_control(self, parent):
+        control = tk.Frame(parent, bg=parent.cget("bg"))
+        labels = list(history.KEEP)
+        current = next((k for k, v in history.KEEP.items() if v == self.app.cfg["history_days"]),
+                       f"{self.app.cfg['history_days']} days")
+        var = tk.StringVar(self.root, value=current)
+        box = ttk.Combobox(control, textvariable=var, values=labels, width=11, font=font(10),
+                           style="Yap.TCombobox", state="readonly")
+        box.pack(side="left", padx=(0, px(10)))
+
+        def chosen(_event=None):
+            days = history.KEEP[var.get()]
+            if days == self.app.cfg["history_days"]:
+                return
+            doomed = history.count_older(days)
+            if doomed and not messagebox.askyesno(
+                    "Delete old dictations?",
+                    f"This permanently deletes {doomed} dictation{'s' if doomed != 1 else ''} from your history.",
+                    parent=self.root):
+                var.set(current)
+                return
+            try:
+                self.app.set_history_days(days)
+            except (OSError, ValueError, TypeError) as exc:
+                messagebox.showerror("Could not save setting", str(exc), parent=self.root)
+                var.set(current)
+
+        def clear():
+            count = history.count_older(-1)
+            if not count:
+                messagebox.showinfo("History is empty", "There are no saved dictations.", parent=self.root)
+            elif messagebox.askyesno("Clear history?", f"This permanently deletes all {count} saved "
+                                     f"dictation{'s' if count != 1 else ''}.", parent=self.root):
+                history.clear()
+
+        box.bind("<<ComboboxSelected>>", chosen)
+        Button(control, "Clear", clear, "secondary", size=9).pack(side="left")
+        return control
+
     @staticmethod
     def _canonical_key(name):
         name = (name or "").lower()
@@ -1407,19 +1448,16 @@ class Window:
     def _history(self):
         page = self._scroll_area(self.main)
         self._header(page, "Dictation history", "Recent speech converted to text. Copy to reuse it, or use the pencil to fix a mistake and teach Yap.")
-        try:
-            with open(config.HISTORY_PATH, encoding="utf-8") as f:
-                lines = f.readlines()[-100:]
-            items = [json.loads(line) for line in reversed(lines) if line.strip()]
-        except (OSError, ValueError):
-            items = []
+        items = history.recent(100)
         if not items:
             empty = Card(page, radius=16, pad=(22, 40))
             empty.pack(fill="x", padx=px(36))
             tk.Label(empty.body, text=GLYPH["History"], bg=CARD, fg=FAINT, font=icon_font(26)).pack()
             self._label(empty.body, "No dictations yet", 12, bold=True, display=True).pack(pady=(px(10), px(2)))
             hold = " + ".join(_pretty_keys(self.app.cfg["hold_hotkey"]))
-            self._label(empty.body, f"Hold {hold} in any app and start talking.", 9, MUTED).pack()
+            hint = ("History is turned off in Settings." if self.app.cfg["history_days"] < 0
+                    else f"Hold {hold} in any app and start talking.")
+            self._label(empty.body, hint, 9, MUTED).pack()
             return
         day = None
         for item in items:
@@ -1478,7 +1516,7 @@ class Window:
                 dialog.destroy()
                 return
             try:
-                self._rewrite_history(item, fixed)
+                history.rewrite(item, fixed)
             except (OSError, ValueError) as exc:
                 messagebox.showerror("Could not save", str(exc), parent=dialog)
                 return
@@ -1528,28 +1566,6 @@ class Window:
 
         Button(actions, "Learn", lambda: finish(True), icon=GLYPH["check"], size=9).pack(side="right")
         Button(actions, "Not now", lambda: finish(False), "secondary", size=9).pack(side="right", padx=(0, px(8)))
-
-    def _rewrite_history(self, item, text):
-        """Replace one dictation's text in history.jsonl, keeping what the model originally heard."""
-        with self.app.history_lock:
-            with open(config.HISTORY_PATH, encoding="utf-8") as f:
-                lines = f.readlines()
-            for index in range(len(lines) - 1, -1, -1):
-                try:
-                    entry = json.loads(lines[index])
-                except ValueError:
-                    continue
-                if entry.get("t") == item.get("t") and entry.get("text") == item.get("text"):
-                    entry["text"] = text
-                    entry["fixed"] = True
-                    lines[index] = json.dumps(entry) + "\n"
-                    break
-            else:
-                raise ValueError("That dictation is no longer in the history file.")
-            temporary = config.HISTORY_PATH + ".tmp"
-            with open(temporary, "w", encoding="utf-8") as f:
-                f.writelines(lines)
-            os.replace(temporary, config.HISTORY_PATH)
 
     def _copy(self, text, button):
         self.root.clipboard_clear()

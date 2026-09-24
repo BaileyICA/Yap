@@ -307,6 +307,21 @@ def _ordinal(n):
     return f"{n}{suffix}"
 
 
+def _read_cents(words, text, at):
+    """(cents, end) for " and fifty cents" starting at text position `at`, else None."""
+    lead = re.match(r",? and ", text[at:], re.I)
+    if not lead:
+        return None
+    k = next((n for n, w in enumerate(words) if w.start() == at + lead.end()), None)
+    if k is None:
+        return None
+    value, j, ordinal, scale = _read_number(words, k, text)
+    tail = re.match(r" cents?\b", text[words[j - 1].end():], re.I) if j > k else None
+    if not tail or ordinal or scale or not 1 <= value <= 99:
+        return None
+    return value, words[j - 1].end() + tail.end()
+
+
 def format_numbers(text):
     """Write spoken numbers as digits the way Whisper does: 14th, 4.5%, $20, 2026, 3 pm."""
     words = list(_NUM_WORD.finditer(text))
@@ -343,7 +358,12 @@ def format_numbers(text):
                         _UNITS[words[k].group().lower()] < 10 and text[words[k - 1].end():words[k].start()] == " ":
                     digits += str(_UNITS[words[k].group().lower()])
                     k += 1
-                if len(digits) >= 3:
+                # Counting ("one two three four") isn't a number; phone numbers and PINs are 4+ digits.
+                counting = digits in "0123456789" and digits[0] in "01"
+                if len(digits) >= 3 and counting:
+                    i = k  # leave the whole count as words
+                    continue
+                if len(digits) >= 4:
                     out.append(text[pos:start] + digits)
                     pos, i = words[k - 1].end(), k
                     continue
@@ -374,6 +394,9 @@ def format_numbers(text):
             number, end = number + "%", end + unit.end()
         elif money and not ordinal:
             number, end = "$" + number, end + money.end()
+            cents = _read_cents(words, text, end)
+            if cents and not fraction:  # "twenty dollars and fifty cents" -> "$20.50"
+                number, end = f"{number}.{cents[0]:02d}", cents[1]
         out.append(text[pos:start] + number)
         pos, i = end, j
         while i < len(words) and words[i].start() < pos:

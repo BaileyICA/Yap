@@ -3,6 +3,7 @@
 import json
 import os
 import queue
+import shutil
 import threading
 import time
 import wave
@@ -58,12 +59,25 @@ class MeetingCapture:
         self._loop_started = None
 
     def start(self):
+        try:
+            self._start()
+        except Exception:
+            # Nothing was recorded; don't leave an empty folder that never shows up in the list.
+            self._stop.set()
+            if self._mic_stream:
+                self._mic_stream.close()
+                self._mic_stream = None
+            for t in self._threads:
+                t.join(timeout=4)
+            shutil.rmtree(self.folder, ignore_errors=True)
+            raise
+
+    def _start(self):
         if self.computer_audio:
             t = threading.Thread(target=self._record_loopback, daemon=True)
             t.start()
             self._threads.append(t)
             if not self._loop_ready.wait(5):
-                self._stop.set()
                 raise RuntimeError("Computer audio capture did not start.")
             if self._loop_error:
                 raise RuntimeError(f"Computer audio capture failed: {self._loop_error}")
@@ -71,12 +85,8 @@ class MeetingCapture:
         def mic_callback(indata, _frames, _time_info, _status):
             self._mic_queue.put(indata[:, 0].copy())
 
-        try:
-            self._mic_stream = sd.InputStream(samplerate=RATE, channels=1, dtype="float32", callback=mic_callback)
-            self._mic_stream.start()
-        except Exception:
-            self._stop.set()
-            raise
+        self._mic_stream = sd.InputStream(samplerate=RATE, channels=1, dtype="float32", callback=mic_callback)
+        self._mic_stream.start()
         self.started = time.monotonic()
         t = threading.Thread(target=self._write_mic, daemon=True)
         t.start()

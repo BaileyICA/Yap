@@ -68,6 +68,9 @@ def _text():
         ("line one new line line two", "Line one\nline two"),
         ("meet on tuesday, no wait, wednesday", "Meet on wednesday"),
         ("by thursday the fourteenth, four and a half percent over", "By thursday the 14th, 4.5% over"),
+        ("count one two three four five", "Count one two three four five"),
+        ("my pin is four seven two nine", "My pin is 4729"),
+        ("it costs twenty dollars and fifty cents", "It costs $20.50"),
         ("grocery list, add apples, bananas, vanilla ice cream, no wait, actually chocolate ice cream, barbecue sauce",
          "Grocery list:\n- Apples\n- Bananas\n- Chocolate ice cream\n- Barbecue sauce"),
     ]
