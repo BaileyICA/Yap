@@ -7,7 +7,7 @@ import winsound
 
 import keyboard
 import pystray
-from . import apps, autostart, config, history, inputwatch, textproc
+from . import apps, autostart, config, history, inputwatch, textproc, updater
 from .audio import Recorder, SAMPLE_RATE
 from .branding import icon as _icon
 from .inject import erase, insert
@@ -73,6 +73,9 @@ class App:
         self.undo_hwnd = 0
         self.undo_seq = 0
         self.rec_allowance = 0  # hotkey presses inputwatch will have counted for this recording
+        self.update_info = None   # newest release on GitHub, if it's newer than this copy
+        self.updating = False
+        self.update_notified = None
 
     def log(self, msg):
         line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}"
@@ -342,6 +345,77 @@ class App:
             self.overlay.show("done", "Preview")
             threading.Timer(1.5, lambda: self.state == "idle" and self.overlay.hide()).start()
 
+    # ---- updates ----
+    def _update_loop(self):
+        time.sleep(20)  # let the speech model start loading first
+        while True:
+            if self.cfg["check_for_updates"]:
+                self.check_for_updates()
+            time.sleep(6 * 3600)
+
+    def check_for_updates(self):
+        """Ask GitHub for a newer release. Returns a short result for Settings; blocks, so call it off the UI thread."""
+        try:
+            info = updater.check()
+        except Exception as e:  # noqa: BLE001
+            self.log(f"Update check failed: {type(e).__name__}: {e}")
+            return "Couldn't reach GitHub to check for updates."
+        self.update_info = info
+        if self.window:
+            self.window.refresh_update()
+        if not info:
+            return f"You're up to date (v{updater.__version__})."
+        self.log(f"Update available: v{info['version']}")
+        if self.tray:
+            self.tray.update_menu()
+            if self.update_notified != info["version"]:
+                self.update_notified = info["version"]
+                try:
+                    self.tray.notify("Open Yap and click Update to install it.", f"Yap v{info['version']} is available")
+                except Exception:  # noqa: BLE001
+                    pass
+        return f"Yap v{info['version']} is available."
+
+    def install_update(self):
+        """Download the new version, then quit so the helper can swap the exe and start it again."""
+        info = self.update_info
+        if not info or self.updating:
+            return
+        if not updater.can_self_update(info):
+            os.startfile(info["page"])  # running from source, or the exe's folder isn't writable
+            return
+        if (self.meeting_capture or self.meetings_pending
+                or self.state in ("recording", "busy", "meeting_starting", "meeting_saving")):
+            self.window.update("Finish the current recording or meeting, then update.")
+            return
+        self.updating = True
+        self.window.refresh_update()
+        shown = [-1]
+
+        def progress(fraction):
+            percent = int(fraction * 100)
+            if percent != shown[0]:
+                shown[0] = percent
+                self.window.update(f"Downloading update... {percent}%")
+
+        def run():
+            try:
+                new_exe = updater.download(info, progress)
+                updater.launch_installer(new_exe)
+            except Exception as e:  # noqa: BLE001
+                self.log(f"Update failed: {type(e).__name__}: {e}")
+                self.updating = False
+                self.window.refresh_update()
+                self.window.update(f"Update failed: {e}")
+                return
+            self.log(f"Installing Yap v{info['version']} and restarting")
+            self.window.update(f"Restarting into Yap v{info['version']}...")
+            self.overlay.show("working", f"Updating to v{info['version']}...")
+            time.sleep(1.0)
+            self.tray.stop()
+
+        threading.Thread(target=run, daemon=True).start()
+
     # ---- dictionary ----
     def update_dictionary(self, vocabulary=None, replacements=None):
         """Save vocabulary/replacements; the next dictation uses them (the worker reads self.cfg)."""
@@ -492,6 +566,7 @@ class App:
         threading.Thread(target=_wait_for_open, args=(self.window,), daemon=True).start()
         threading.Thread(target=self.worker, daemon=True).start()
         threading.Thread(target=self._meeting_worker, daemon=True).start()
+        threading.Thread(target=self._update_loop, daemon=True).start()
         inputwatch.start()
         keyboard.hook(self.on_key)
         self.toggle_hotkey_id = keyboard.add_hotkey(self.cfg["toggle_hotkey"], self.on_toggle)
@@ -500,6 +575,8 @@ class App:
         menu = pystray.Menu(
             pystray.MenuItem(hint, None, enabled=False),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem(lambda _: f"⬆  Update to v{self.update_info['version']}" if self.update_info else "Update",
+                             lambda *_: self.install_update(), visible=lambda _: bool(self.update_info)),
             pystray.MenuItem("🏠  Open Yap", lambda *_: self.window.show(), default=True),
             pystray.MenuItem("🎙  Record a meeting", lambda *_: self.window.show("Meetings")),
             pystray.MenuItem("🕘  Dictation history", lambda *_: self.window.show("History")),

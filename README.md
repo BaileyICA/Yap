@@ -8,7 +8,11 @@ Free, local, offline voice dictation for Windows — a Wispr Flow-style tool. Ho
 
 **[Download Yap for Windows](https://github.com/BaileyICA/Yap/releases/latest/download/Yap-Windows-x64.zip)** (latest release; older versions and release notes are on the [Releases page](https://github.com/BaileyICA/Yap/releases)). Extract the ZIP and run `Yap.exe`. Windows may show a SmartScreen prompt because the app is not code-signed; choose **More info → Run anyway** if you trust the download. The app stores settings, logs, history, meetings, and downloaded speaker models in `%LOCALAPPDATA%\Yap`. The speech model downloads on first launch, so allow time and disk space for that download.
 
-Every push to `main` also builds a downloadable ZIP under the GitHub Actions run's **Artifacts**. To publish a version under **Releases**, push a version tag such as `v1.0.0`; the workflow attaches the ZIP to that release.
+Every push to `main` also builds a downloadable ZIP under the GitHub Actions run's **Artifacts**. To publish a version under **Releases**, push a version tag such as `v1.4.0`; the workflow stamps that version into the app and attaches the ZIP to the release.
+
+### Updates
+
+Yap checks GitHub for a newer release shortly after it starts and every six hours (only the version number is fetched). When one is out, an **Update available** card appears in the sidebar, the tray menu gets an **Update to vX** item, and Windows shows a notification. Click **Update now**: Yap downloads the new version, closes, replaces `Yap.exe` in place and starts again, with your settings and history untouched. Turn the check off or run it by hand under **Settings → Updates**. If `Yap.exe` sits in a folder it can't write to (such as Program Files) or you run from source, the button opens the release page instead.
 
 ### Run from source
 
@@ -71,6 +75,7 @@ Open **Yap → Settings** to choose the speech engine (Parakeet or Whisper) and 
 - `gpu_model` / `cpu_model` — any faster-whisper model name (Whisper engine only)
 - `insert_method` — `paste` (fast) or `type`
 - `email_formatting` / `email_apps` — email layout on or off, and where it applies: a program (`"outlook.exe"`) or a word in the window title (`"Gmail"`, which covers Gmail in any browser)
+- `check_for_updates` — look for new releases on GitHub (also in Settings)
 - `overlay_style` — speaking visual: `dog`, `bars`, `wave`, `orb`, or `dots` (also in Settings)
 - `polish` — optional AI rewrite (grammar, self-corrections, tone) using a free local LLM through [Ollama](https://ollama.com): install it, `ollama pull llama3.2:3b`, set `"enabled": true`
 

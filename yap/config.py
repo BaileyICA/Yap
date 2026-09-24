@@ -59,6 +59,8 @@ DEFAULTS = {
     "history_days": 0,
     # Speaking visual: "dog" (runs while you talk, default), "bars", "wave", "orb", or "dots".
     "overlay_style": "dog",
+    # Ask GitHub a few times a day whether a newer Yap is out (only the version number is fetched).
+    "check_for_updates": True,
     # Words/names to get right. Near-misses in the transcript are snapped to these
     # spellings (any engine); Whisper also uses them as a recognition hint.
     "vocabulary": ["Wispr Flow", "OpenAI", "Claude", "Anthropic"],

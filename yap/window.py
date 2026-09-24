@@ -12,7 +12,7 @@ from tkinter import font as tkfont, messagebox, ttk
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageTk
 
-from . import audio, autostart, config, history, textproc
+from . import audio, autostart, config, history, textproc, updater
 from .branding import BRAND_NAVY, icon as yap_icon
 from .meeting_notes import transcript_text
 from .meetings import list_meetings, load_meeting, save_meeting
@@ -41,7 +41,7 @@ GLYPH = {
     "record": "", "stop": "", "folder": "", "save": "",
     "keyboard": "", "copy": "", "retry": "",
     "shield": "", "edit": "", "check": "", "chip": "",
-    "close": "", "add": "",
+    "close": "", "add": "", "download": "",
 }
 NAV_ITEMS = ("Home", "Meetings", "History", "Settings")
 PLACEHOLDER = "Meeting title (optional)"
@@ -388,6 +388,8 @@ class Window:
         self.meeting_status_label = None
         self.meetings_view = None
         self.mic_test = None
+        self.update_check_label = None
+        self.update_check_message = None
         self._ready = threading.Event()
         threading.Thread(target=self._run, daemon=True).start()
         self._ready.wait(5)
@@ -398,6 +400,10 @@ class Window:
     def update(self, status):
         """Show a status message. Never switches page or rebuilds one the user may be typing in."""
         self.commands.put(("update", status))
+
+    def refresh_update(self):
+        """Redraw the update banner after a check finds a release or an install starts or fails."""
+        self.commands.put(("update_info", None))
 
     def _run(self):
         global _scale
@@ -427,6 +433,7 @@ class Window:
         root.protocol("WM_DELETE_WINDOW", self._close)
         self._style()
         self._shell()
+        self._paint_update()
         self._render()
         root.update_idletasks()
         _dark_title_bar(root)
@@ -479,6 +486,8 @@ class Window:
 
         footer = tk.Frame(self.sidebar, bg=SIDEBAR)
         footer.pack(side="bottom", fill="x", padx=px(14), pady=px(16))
+        self.update_slot = tk.Frame(footer, bg=SIDEBAR)
+        self.update_slot.pack(fill="x")
         self.status_card = Card(footer, fill=CARD, radius=12, pad=(14, 12))
         self.status_card.pack(fill="x")
         top = tk.Frame(self.status_card.body, bg=CARD)
@@ -527,6 +536,29 @@ class Window:
         row.bind("<Enter>", lambda _e: hover(True))
         row.bind("<Leave>", lambda _e: hover(False))
         return paint
+
+    def _paint_update(self):
+        """An accent card above the status card while a newer release is waiting."""
+        for child in self.update_slot.winfo_children():
+            child.destroy()
+        info = self.app.update_info
+        if not info:
+            return
+        card = Card(self.update_slot, fill=ACCENT_SOFT, border=_mix(ACCENT, CARD, 0.45), radius=12, pad=(14, 12))
+        card.pack(fill="x", pady=(0, px(10)))
+        top = tk.Frame(card.body, bg=ACCENT_SOFT)
+        top.pack(fill="x")
+        tk.Label(top, text=GLYPH["download"], bg=ACCENT_SOFT, fg=ACCENT, font=icon_font(10)).pack(side="left")
+        tk.Label(top, text="Update available", bg=ACCENT_SOFT, fg=TEXT, font=font(9, True)).pack(
+            side="left", padx=(px(6), 0))
+        tk.Label(card.body, text=f"v{info['version']} is ready to install.",
+                 bg=ACCENT_SOFT, fg=MUTED, font=font(8), anchor="w", justify="left",
+                 wraplength=px(160)).pack(anchor="w", pady=(px(3), px(8)))
+        if self.app.updating:
+            tk.Label(card.body, text="Updating...", bg=ACCENT_SOFT, fg=ACCENT, font=font(9, True)).pack(anchor="w")
+        else:
+            label = "Update now" if updater.can_self_update(info) else "Download"
+            Button(card.body, label, self.app.install_update, icon=GLYPH["download"], size=9).pack(anchor="w")
 
     def _paint_nav(self):
         for paint in self.nav_rows.values():
@@ -1159,7 +1191,42 @@ class Window:
         Button(where, "Open", lambda: os.makedirs(folder, exist_ok=True) or os.startfile(folder), "secondary",
                GLYPH["folder"], size=9).pack(side="right")
         self._label(where, folder, 9, FAINT).pack(side="left")
+
+        self._section(page, "Updates")
+        updates = self._settings_card(page)
+        self.updates_var = tk.BooleanVar(self.root, value=self.app.cfg["check_for_updates"])
+        self._setting_row(updates, "Check for updates", "Yap asks GitHub for the latest version a few times a day. "
+                                                        "Nothing about you or your dictation is sent.",
+                          lambda parent: Switch(parent, self.updates_var, self._set_check_updates))
+        self._divider(updates)
+        row = tk.Frame(updates, bg=CARD)
+        row.pack(fill="x")
+        if self.app.update_info and not self.app.updating:
+            Button(row, f"Update to v{self.app.update_info['version']}", self.app.install_update,
+                   icon=GLYPH["download"], size=9).pack(side="right", padx=(px(8), 0))
+        Button(row, "Check now", self._check_updates, "secondary", GLYPH["retry"], size=9).pack(side="right")
+        self._label(row, f"Version {updater.__version__}", 10, bold=True).pack(anchor="w")
+        self.update_check_label = self._label(row, self._update_summary(), 9, MUTED)
+        self.update_check_label.pack(anchor="w", pady=(px(1), 0))
         tk.Frame(page, bg=BG, height=px(30)).pack()
+
+    def _update_summary(self):
+        info = self.app.update_info
+        if self.app.updating:
+            return f"Installing v{info['version']}..."
+        if info:
+            return f"v{info['version']} is available."
+        return self.update_check_message or "Yap restarts itself after an update."
+
+    def _set_check_updates(self, on):
+        config.save_updates(check_for_updates=bool(on))
+        self.app.cfg["check_for_updates"] = bool(on)
+
+    def _check_updates(self):
+        if self.update_check_label is not None and self.update_check_label.winfo_exists():
+            self.update_check_label.configure(text="Checking...")
+        threading.Thread(target=lambda: self.commands.put(("update_checked", self.app.check_for_updates())),
+                         daemon=True).start()
 
     def _settings_card(self, parent):
         card = Card(parent, radius=16, pad=(22, 18))
@@ -1739,6 +1806,15 @@ class Window:
                 elif cmd == "update":
                     self.status_text = payload or self.status_text
                     status_changed = True
+                elif cmd == "update_info":
+                    self._paint_update()
+                    if self.page == "Settings":
+                        changed = True  # show or hide the "Update to" button
+                elif cmd == "update_checked":
+                    self.update_check_message = payload
+                    label = self.update_check_label
+                    if label is not None and label.winfo_exists():
+                        label.configure(text=payload)
         except queue.Empty:
             pass
         if changed:
