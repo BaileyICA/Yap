@@ -44,6 +44,8 @@ DEFAULTS = {
     "insert_method": "paste",
     "add_trailing_space": False,
     "remove_fillers": True,
+    # Write spoken numbers as digits: "four and a half percent" -> "4.5%", "the fourteenth" -> "the 14th".
+    "numbers_as_digits": True,
     "beep": False,
     "min_recording_seconds": 0.35,
     # Speaking visual: "bars" (soft rounded equalizer, default), "wave", "orb", or "dots".

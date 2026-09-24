@@ -244,12 +244,151 @@ def learn_corrections(before, after):
     return rules
 
 
+# ---- spoken numbers -> digits ("four and a half percent" -> "4.5%") ----
+_UNITS = {w: n for n, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
+    "sixteen seventeen eighteen nineteen".split())}
+_TENS = {w: 10 * n for n, w in enumerate("twenty thirty forty fifty sixty seventy eighty ninety".split(), 2)}
+_SCALES = {"thousand": 10 ** 3, "million": 10 ** 6, "billion": 10 ** 9, "trillion": 10 ** 12}
+_ORDINAL_UNITS = {w: n for n, w in enumerate(
+    "first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth "
+    "fourteenth fifteenth sixteenth seventeenth eighteenth nineteenth".split(), 1)}
+_ORDINAL_TENS = {w: 10 * n for n, w in enumerate(
+    "twentieth thirtieth fortieth fiftieth sixtieth seventieth eightieth ninetieth".split(), 2)}
+_MONTHS = set("january february march april may june july august september october november december".split())
+_NUM_WORD = re.compile(r"[A-Za-z]+")
+_NUM_GAP = re.compile(r" +|-")
+# Under ten stays a word ("one of them", "two options") unless a unit makes it a quantity.
+_UNIT_AFTER = re.compile(
+    r"\s*(?:%|[ap]\.?\s?m\b|o'clock\b|percent\b|per cent\b|dollars?\b|cents?\b|degrees?\b|kilo\w*|"
+    r"km\b|kms\b|kg\b|kgs\b|mph\b|met(?:re|er)s?\b|centimet\w+|millimet\w+|cm\b|mm\b|grams?\b|"
+    r"lit(?:re|er)s?\b|ml\b|[kmgt]b\b|[kmg]?hz\b)", re.IGNORECASE)
+
+
+def _read_number(words, i, text):
+    """Parse one spoken number starting at words[i]. Returns (value, next index, ordinal, scale word)."""
+    total = group = 0
+    last = scale = None
+    ordinal = False
+    j = i
+    while j < len(words) and not ordinal:
+        if j > i and not _NUM_GAP.fullmatch(text[words[j - 1].end():words[j].start()]):
+            break
+        w = words[j].group().lower()
+        after_group = last in (None, "hundred", "scale", "and")
+        if (w in _UNITS or w in _ORDINAL_UNITS) and (after_group or (last == "tens" and _UNITS.get(w, _ORDINAL_UNITS.get(w)) < 10)):
+            ordinal = w in _ORDINAL_UNITS
+            n = _ORDINAL_UNITS[w] if ordinal else _UNITS[w]
+            group += n
+            last = "unit"
+        elif (w in _TENS or w in _ORDINAL_TENS) and after_group:
+            ordinal = w in _ORDINAL_TENS
+            group += _ORDINAL_TENS[w] if ordinal else _TENS[w]
+            last = "tens"
+        elif w in ("hundred", "hundredth") and last in ("unit", "tens") and 0 < group < 100:
+            group *= 100
+            ordinal, last = w == "hundredth", "hundred"
+        elif w.rstrip("th") in _SCALES and last in ("unit", "tens", "hundred") and group:
+            ordinal = w.endswith("th")
+            total, group, last, scale = total + group * _SCALES[w.rstrip("th")], 0, "scale", w.rstrip("th")
+        elif w == "and" and last in ("hundred", "scale") and j + 1 < len(words) and \
+                (words[j + 1].group().lower() in _UNITS or words[j + 1].group().lower() in _TENS):
+            last = "and"  # "one hundred and five"
+        else:
+            break
+        j += 1
+    if last == "and":
+        j -= 1
+    return total + group, j, ordinal, scale
+
+
+def _ordinal(n):
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def format_numbers(text):
+    """Write spoken numbers as digits the way Whisper does: 14th, 4.5%, $20, 2026, 3 pm."""
+    words = list(_NUM_WORD.finditer(text))
+    out, pos, i = [], 0, 0
+    while i < len(words):
+        value, j, ordinal, scale = _read_number(words, i, text)
+        if j == i:
+            i += 1
+            continue
+        start, end = words[i].start(), words[j - 1].end()
+        rest = text[end:]
+        fraction = ""
+        spoken = j - i
+        if not ordinal:
+            m = re.match(r"( point((?: (?:zero|one|two|three|four|five|six|seven|eight|nine))+)| and a half)\b", rest, re.I)
+            if m and m.group(2):
+                fraction = "".join(str(_UNITS[d.lower()]) for d in m.group(2).split())
+            elif m:
+                fraction = "5"
+            if m:
+                end, rest, spoken = end + m.end(), rest[m.end():], spoken + 2
+            elif spoken == 1 and value in (19, 20):
+                # Years: "nineteen ninety nine", "twenty twenty six".
+                year, k, year_ordinal, year_scale = _read_number(words, j, text)
+                if k > j and 10 <= year <= 99 and not year_ordinal and not year_scale and \
+                        _NUM_GAP.fullmatch(text[end:words[j].start()]) and words[k - 1].group().lower() != "hundred":
+                    out.append(text[pos:start] + str(value * 100 + year))
+                    pos, i = words[k - 1].end(), k
+                    continue
+            elif spoken == 1 and value < 10:
+                # Phone/PIN style runs of single digits: "five five five one two".
+                k, digits = j, str(value)
+                while k < len(words) and words[k].group().lower() in _UNITS and \
+                        _UNITS[words[k].group().lower()] < 10 and text[words[k - 1].end():words[k].start()] == " ":
+                    digits += str(_UNITS[words[k].group().lower()])
+                    k += 1
+                if len(digits) >= 3:
+                    out.append(text[pos:start] + digits)
+                    pos, i = words[k - 1].end(), k
+                    continue
+        small = spoken == 1 and value < 10 and not fraction
+        if small and ordinal:
+            before = text[:start].split()
+            dated = (before and before[-1].strip(",.").lower() in _MONTHS) or \
+                re.match(r" of (" + "|".join(_MONTHS) + r")\b", rest, re.I)
+            if not dated:
+                i = j
+                continue  # "first of all", "a second opinion"
+        elif small and not _UNIT_AFTER.match(rest):
+            i = j
+            continue
+        if ordinal:
+            number = _ordinal(value)
+        elif scale and value % _SCALES[scale] == 0 and not fraction:
+            number = f"{value // _SCALES[scale]:,} {scale}"  # "2 million", not "2,000,000"
+        else:
+            number = f"{value:,}" if value >= 10000 else str(value)
+            number += "." + fraction if fraction else ""
+            big = fraction and re.match(r" (million|billion|trillion)", rest, re.I)
+            if big:  # "two point five million" -> "2.5 million"
+                number, end, rest = f"{number} {big.group(1)}", end + big.end(), rest[big.end():]
+        unit = re.match(r" (percent|per cent)\b", rest, re.I)
+        money = re.match(r" dollars?\b", rest, re.I)
+        if unit:
+            number, end = number + "%", end + unit.end()
+        elif money and not ordinal:
+            number, end = "$" + number, end + money.end()
+        out.append(text[pos:start] + number)
+        pos, i = end, j
+        while i < len(words) and words[i].start() < pos:
+            i += 1
+    return "".join(out) + text[pos:]
+
+
 def clean(text, cfg):
     text = _SCRATCH.sub("", text)
     if cfg["remove_fillers"]:
         text = _FILLERS.sub("", text)
     text = fix_words(text, cfg)
     text = apply_map(text, cfg["snippets"])
+    if cfg["numbers_as_digits"]:
+        text = format_numbers(text)
     text = _apply_corrections(text)
     text = format_list(text)
     for rx, repl in _COMMANDS:

@@ -182,6 +182,8 @@ def process_meeting(folder, transcriber, cfg, progress=print, log=print):
             offset = data.get("computer_offset", 0) if source == "computer" else 0
             for turn in source_turns:
                 turn["text"] = textproc.fix_words(turn["text"], cfg)
+                if cfg["numbers_as_digits"]:
+                    turn["text"] = textproc.format_numbers(turn["text"])
                 turn["start"] = max(0, round(turn["start"] + offset, 2))
                 turn["end"] = max(turn["start"], round(turn["end"] + offset, 2))
             turns.extend(source_turns)

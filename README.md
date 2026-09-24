@@ -49,6 +49,7 @@ Open **Yap → Settings** to choose the speech engine (Parakeet or Whisper) and 
 - `engine` — `parakeet` (default; fastest and most accurate for English) or `whisper` (other languages)
 - `parakeet_model` — `nemo-parakeet-tdt-0.6b-v2` (English) or `nemo-parakeet-tdt-0.6b-v3` (25 European languages)
 - `vocabulary` — names/jargon to spell your way. Near-misses in a transcript are snapped to these (`Greymont` → `Graymont`, `Lamin-X` → `Laminex`); Whisper also uses them as a hint
+- `numbers_as_digits` — write spoken numbers as digits (`the fourteenth` → `the 14th`, `four and a half percent` → `4.5%`, `twenty twenty six` → `2026`); numbers under ten stay words unless they carry a unit (`5 pm`, `3%`)
 - `replacements` — fix consistent mis-hearings (`"open ai": "OpenAI"`)
 - `snippets` — say a phrase, get a block of text (`"my sign off": "Kind regards,\nBailey"`)
 - `language` — `en`, `fr`, … or `auto`
