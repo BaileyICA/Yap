@@ -7,10 +7,10 @@ import winsound
 
 import keyboard
 import pystray
-from . import autostart, config, history, textproc
+from . import autostart, config, history, inputwatch, textproc
 from .audio import Recorder, SAMPLE_RATE
 from .branding import icon as _icon
-from .inject import insert
+from .inject import erase, insert
 from .overlay import Overlay
 from .transcribe import Transcriber
 from .meetings import MeetingCapture, list_meetings
@@ -30,6 +30,11 @@ def _combo(s):
     return {_norm(k.strip()) for k in s.split("+")}
 
 
+def _typing_keys(combo):
+    """Keys in a hotkey that inputwatch counts as typing (everything but modifiers)."""
+    return len(combo - inputwatch.MODIFIER_NAMES)
+
+
 class App:
     def __init__(self):
         self.cfg = config.load()
@@ -38,6 +43,7 @@ class App:
         self.recorder.microphone = self.cfg["microphone"]
         self.tr = Transcriber(self.cfg, log=self.log)
         self.hold = _combo(self.cfg["hold_hotkey"])
+        self.toggle = _combo(self.cfg["toggle_hotkey"])
         self.cancel = _combo(self.cfg["cancel_key"])
         self.down = set()
         self.state = "loading"  # loading | idle | recording | busy
@@ -61,6 +67,12 @@ class App:
         self.meeting_lock = threading.Lock()
         self.model_ready = threading.Event()
         self.model_error = None
+        # "Scratch that": what the last dictations inserted, newest last, while nothing has been
+        # typed or clicked since and the same window is in front.
+        self.undo_stack = []
+        self.undo_hwnd = 0
+        self.undo_seq = 0
+        self.rec_allowance = 0  # hotkey presses inputwatch will have counted for this recording
 
     def log(self, msg):
         line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}"
@@ -72,9 +84,10 @@ class App:
             pass
 
     # ---- recording control (called from keyboard hook thread; keep it fast) ----
-    def start_rec(self, mode):
+    def start_rec(self, mode, via="hold"):
         if self.state != "idle" or not self.enabled:
             return
+        self.rec_allowance = _typing_keys(self.hold if via == "hold" else self.toggle)
         try:
             self.recorder.start()
         except Exception as e:  # noqa: BLE001
@@ -87,9 +100,11 @@ class App:
         self._tray_status()
         self._beep(880)
 
-    def stop_rec(self, discard=False):
+    def stop_rec(self, discard=False, via=None):
         if self.state != "recording":
             return
+        if via:
+            self.rec_allowance += _typing_keys(self.hold if via == "hold" else self.toggle)
         audio = self.recorder.stop()
         dur = len(audio) / SAMPLE_RATE
         self.mode = None
@@ -102,7 +117,7 @@ class App:
         self._tray_status()
         self.overlay.show("working", "Transcribing...")
         self._beep(660)
-        self.jobs.put(audio)
+        self.jobs.put((audio, self.rec_allowance))
 
     def _beep(self, freq):
         if self.cfg["beep"]:
@@ -133,7 +148,7 @@ class App:
         elif self.state == "recording" and self.mode == "toggle" and double:
             self.last_tap = 0.0
             self.swallow_release = True
-            self.stop_rec()
+            self.stop_rec(via="hold")
 
     def _combo_released(self, now):
         is_tap = self.combo_clean and now - self.combo_t <= self.cfg["tap_max_seconds"]
@@ -177,9 +192,9 @@ class App:
 
     def on_toggle(self):
         if self.state == "recording":
-            self.stop_rec()
+            self.stop_rec(via="toggle")
         elif self.state == "idle":
-            self.start_rec("toggle")
+            self.start_rec("toggle", via="toggle")
 
     def begin_key_capture(self, callback):
         """Temporarily route the global keyboard hook to the shortcut recorder."""
@@ -206,7 +221,9 @@ class App:
             self.hold = _combo(hotkey)
         elif setting == "cancel_key":
             self.cancel = _combo(hotkey)
-        elif self.toggle_hotkey_id is not None:
+        else:
+            self.toggle = _combo(hotkey)
+        if setting == "toggle_hotkey" and self.toggle_hotkey_id is not None:
             keyboard.remove_hotkey(self.toggle_hotkey_id)
             self.toggle_hotkey_id = keyboard.add_hotkey(hotkey, self.on_toggle)
         self.down.clear()
@@ -237,18 +254,23 @@ class App:
             if item.get("status") == "processing":
                 self.reprocess_meeting(item["folder"])
         while True:
-            audio = self.jobs.get()
+            audio, allowance = self.jobs.get()
             t = time.time()
             try:
                 raw = self.tr.transcribe(audio)
+                undo, raw = textproc.undo_command(raw)
+                scratched = undo and self._scratch_last(allowance)
                 text = textproc.clean(raw, self.cfg)
                 text = textproc.polish(text, self.cfg)
                 if text:
                     if self.cfg["add_trailing_space"]:
                         text += " "
                     insert(text, self.cfg["insert_method"])
+                    self._remember(text, allowance)
                     history.append(raw, text, self.cfg["history_days"])
                     self.overlay.show("done", "Done")
+                elif undo:
+                    self.overlay.show("done" if scratched else "info", "Scratched" if scratched else "Nothing to scratch")
                 else:
                     self.overlay.show("info", "Nothing heard")
                 self.log(f"{len(audio) / SAMPLE_RATE:.1f}s audio -> {time.time() - t:.2f}s: {text!r}")
@@ -260,6 +282,29 @@ class App:
                 self.state = "idle"
                 self.overlay.hide()
                 self._tray_status()
+
+    def _undo_ready(self, allowance):
+        """True if the caret is still right after the last dictation: same window, nothing typed or clicked."""
+        return (bool(self.undo_stack) and inputwatch.foreground() == self.undo_hwnd
+                and inputwatch.seq - self.undo_seq <= allowance)
+
+    def _remember(self, text, allowance):
+        if not self._undo_ready(allowance):
+            self.undo_stack.clear()  # the caret moved; earlier dictations are no longer next to it
+        self.undo_stack = self.undo_stack[-19:] + [text]
+        self.undo_hwnd, self.undo_seq = inputwatch.foreground(), inputwatch.seq
+
+    def _scratch_last(self, allowance):
+        """Delete the previous dictation, if it's safe to. Returns whether anything was removed."""
+        if not self._undo_ready(allowance):
+            self.undo_stack.clear()
+            self.log("Scratch that: nothing to remove (typed, clicked or switched windows since)")
+            return False
+        text = self.undo_stack.pop()
+        erase(len(text))
+        self.undo_seq = inputwatch.seq
+        self.log(f"Scratched {text!r}")
+        return True
 
     def set_history_days(self, days):
         """Save the history retention setting and apply it now. Returns how many entries were removed."""
@@ -423,6 +468,7 @@ class App:
         threading.Thread(target=_wait_for_open, args=(self.window,), daemon=True).start()
         threading.Thread(target=self.worker, daemon=True).start()
         threading.Thread(target=self._meeting_worker, daemon=True).start()
+        inputwatch.start()
         keyboard.hook(self.on_key)
         self.toggle_hotkey_id = keyboard.add_hotkey(self.cfg["toggle_hotkey"], self.on_toggle)
         self.overlay.show("info", "Loading model...")

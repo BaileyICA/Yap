@@ -25,6 +25,14 @@ def wait_for_modifiers_release(timeout=2.0):
     return False
 
 
+def erase(count):
+    """Backspace over the last `count` characters typed or pasted."""
+    wait_for_modifiers_release()  # Ctrl+Backspace would delete whole words
+    for _ in range(count):
+        keyboard.send("backspace")
+        time.sleep(0.002)
+
+
 def insert(text, method="paste"):
     if not text:
         return

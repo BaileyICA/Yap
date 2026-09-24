@@ -10,6 +10,15 @@ _COMMANDS = [
     (re.compile(r"[,.]?\s*\b(?:new line|newline|next line)\b[.,]?\s*", re.IGNORECASE), "\n"),
 ]
 
+# A dictation that opens with this removes the previous dictation: "Scratch that." / "Scratch that, meet Friday."
+_UNDO = re.compile(r"^\W*(?:scratch|strike|delete|undo)\s+that\b[\s.,;:!?-]*", re.IGNORECASE)
+
+
+def undo_command(text):
+    """(True, what's left to type) if the dictation starts with "scratch that", else (False, text)."""
+    m = _UNDO.match(text)
+    return (True, text[m.end():]) if m else (False, text)
+
 
 # "vanilla, no wait, actually chocolate": the cue plus an optional softener after it.
 # Loose cues ("make that", "I meant"...) only count after punctuation so ordinary prose survives.
@@ -385,7 +394,7 @@ def format_numbers(text):
         else:
             number = f"{value:,}" if value >= 10000 else str(value)
             number += "." + fraction if fraction else ""
-            big = fraction and re.match(r" (million|billion|trillion)", rest, re.I)
+            big = fraction and re.match(r" (million|billion|trillion)\b", rest, re.I)
             if big:  # "two point five million" -> "2.5 million"
                 number, end, rest = f"{number} {big.group(1)}", end + big.end(), rest[big.end():]
         unit = re.match(r" (percent|per cent)\b", rest, re.I)

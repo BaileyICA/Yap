@@ -42,6 +42,8 @@ To use an NVIDIA GPU when running from source, swap ONNX Runtime for its CUDA 12
 
 Voice commands: "new line", "new paragraph", "scratch that" (drops what you just said in that sentence).
 
+Start a dictation with **"scratch that"** (or "delete that" / "undo that") to remove the previous dictation from the app you're typing in; say it again to remove the one before. Anything after it is typed as usual ("scratch that, meet on Friday"). For safety Yap only removes text while the same window is in front and nothing has been typed or clicked since that dictation; otherwise it shows "Nothing to scratch" and leaves the text alone.
+
 ## Settings
 
 Open **Yap → Settings** to choose the speech engine (Parakeet or Whisper) and the Whisper models. Engine and model changes take effect after restarting Yap. Advanced settings remain available in `config.json` (created on first run; restart to apply).
