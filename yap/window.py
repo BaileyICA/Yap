@@ -1097,6 +1097,11 @@ class Window:
         self._setting_row(card, "Speaking visual", "The pill shown near the bottom of your screen.",
                           self._overlay_style_control)
         self._divider(card)
+        self.email_var = tk.BooleanVar(self.root, value=self.app.cfg["email_formatting"])
+        self._setting_row(card, "Format emails", "In Outlook, Gmail and other mail apps, put the greeting "
+                                                 "and sign-off on their own lines.",
+                          lambda parent: Switch(parent, self.email_var, self._set_email_formatting))
+        self._divider(card)
         self.autostart_var = tk.BooleanVar(self.root, value=autostart.enabled())
         self._setting_row(card, "Start with Windows", "Launch quietly into the tray when you sign in.",
                           lambda parent: Switch(parent, self.autostart_var, self._set_autostart))
@@ -1410,6 +1415,13 @@ class Window:
         if name.startswith("left ") or name.startswith("right "):
             name = name.split(" ", 1)[1]
         return {"win": "windows", "escape": "esc"}.get(name, name)
+
+    def _set_email_formatting(self, on):
+        try:
+            self.app.set_email_formatting(on)
+        except (OSError, ValueError, TypeError) as exc:
+            messagebox.showerror("Could not save setting", str(exc), parent=self.root)
+            self.email_var.set(self.app.cfg["email_formatting"])
 
     def _set_autostart(self, on):
         try:

@@ -78,7 +78,20 @@ def _text():
         got = textproc.clean(src, cfg)
         if got != want:
             raise RuntimeError(f"{src!r} -> {got!r}, expected {want!r}")
-    return f"{len(cases)} cleanup cases"
+    emails = [
+        ("Hey Ben, I need you to look at this for me, thanks.",
+         "Hey Ben,\n\nI need you to look at this for me.\n\nThanks,"),
+        ("Dear Mr. Smith, the invoice is attached. Kind regards, Bailey Long.",
+         "Dear Mr. Smith,\n\nThe invoice is attached.\n\nKind regards,\nBailey Long"),
+        ("Hey, can you send me the file? Thanks so much!", "Hey,\n\nCan you send me the file?\n\nThanks so much,"),
+        ("Sounds good, see you then.", "Sounds good, see you then."),
+        ("I wanted to say thank you.", "I wanted to say thank you."),
+    ]
+    for src, want in emails:
+        got = textproc.format_email(src)
+        if got != want:
+            raise RuntimeError(f"email {src!r} -> {got!r}, expected {want!r}")
+    return f"{len(cases)} cleanup cases, {len(emails)} email cases"
 
 
 def _model():

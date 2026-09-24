@@ -433,6 +433,77 @@ def clean(text, cfg):
     return text
 
 
+# ---- email layout: "Hey Ben, can you look at this, thanks" -> greeting, body and sign-off lines ----
+_GREETING = re.compile(
+    r"\s*((?:hi|hey|hello|hiya|dear|greetings|good\s+(?:morning|afternoon|evening)|morning|afternoon|evening)"
+    r"(?:\s+(?:there|again))?)\b", re.IGNORECASE)
+_GROUP = {"all", "team", "everyone", "everybody", "guys", "folks", "y'all", "both"}
+_TITLE = re.compile(r"(?:mr|mrs|ms|dr|prof)\.?$", re.IGNORECASE)
+_SIGNOFF = re.compile(
+    r"[,.!?;:\n]\s*((?:many\s+|thanks\s+)?(?:thanks|thank\s+you)(?:\s+(?:so|very)\s+much|\s+a\s+lot|\s+again|\s+in\s+advance)?"
+    r"|cheers|best|best\s+wishes|(?:kind|warm|best)\s+regards|regards|all\s+the\s+best|sincerely|talk\s+soon|"
+    r"speak\s+soon|take\s+care)[\s,.!]*(?:(?-i:([A-Z][\w'-]*(?:\s+[A-Z][\w'-]*)?))[.!]?)?\s*$", re.IGNORECASE)
+
+
+def _greeting_name(rest):
+    """(name, length) of who's being greeted at the start of `rest`: "Ben", "Mr. Smith", "team"."""
+    if re.match(r"\s*[.!?]", rest):
+        return "", 0  # "Hey. Can you..." - the next word just starts a sentence
+    words = list(re.finditer(r"[^\s,.!?:;]+\.?", rest))
+    run = []
+    for w in words[:4]:
+        if run and rest[run[-1].end():w.start()].strip():
+            break  # punctuation in between: the name has ended
+        word = w.group() if _TITLE.match(w.group()) else w.group().rstrip(".")
+        name_like = word[:1].isupper() and not re.fullmatch(r"I(?:'[a-z]+)?", word)
+        if not (name_like or word.lower() in _GROUP or (run and word.lower() == "and")):
+            break
+        run.append(w)
+    if not run and words and re.match(r"\s*,", rest[words[0].end():]) and words[0].group().lower() not in _COMMON:
+        return words[0].group().capitalize(), words[0].end()  # "hey ben, ..." with the name left lowercase
+    ended = run and (run[-1].group().endswith(".") or re.match(r"\s*(?:[,:;!.\n]|$)", rest[run[-1].end():]))
+    if not ended:
+        # "Hey Ben Can you..." - a capitalised everyday word after the name belongs to the sentence.
+        while run and run[-1].group().lower().rstrip(".") in (_COMMON - _GROUP) | {"and"}:
+            run.pop()
+    if not run:
+        return "", 0
+    return rest[run[0].start():run[-1].end()].rstrip("."), run[-1].end()
+
+
+def format_email(text):
+    """Lay dictation out as an email: "Hey Ben,", a blank line, the body, a blank line, "Thanks,".
+
+    Text with neither a greeting nor a sign-off is left alone, so a quick "sounds good" stays as-is.
+    """
+    greeting = signoff = name = ""
+    body = text
+    g = _GREETING.match(body)
+    if g:
+        name, length = _greeting_name(body[g.end():])
+        hello = g.group(1)
+        greeting = hello[0].upper() + hello[1:].lower() + (" " + name if name else "") + ","
+        body = body[g.end() + length:].lstrip(" ,.!:;-\n")
+    padded = "\n" + body  # a sign-off can also be the whole body: "Hi Ben, thanks!"
+    s = _SIGNOFF.search(padded)
+    if s:
+        words, who = s.group(1), s.group(2)
+        signoff = words[0].upper() + words[1:].lower()
+        if who and who.lower() == name.lower():
+            signoff += ", " + who + "."  # thanking the person greeted: "Thanks, Ben."
+        else:
+            signoff += "," + ("\n" + who if who else "")  # "Thanks," with your name underneath
+        body = padded[:s.start() + 1]  # keep a "?" or "." that ended the body
+    if not (greeting or signoff):
+        return text
+    body = body.strip().rstrip(",;:-").strip()
+    if body:
+        body = body[0].upper() + body[1:]
+        if body[-1].isalnum():
+            body += "."
+    return "\n\n".join(p for p in (greeting, body, signoff) if p)
+
+
 def polish(text, cfg):
     """Optional local-LLM rewrite via Ollama. Returns the input unchanged on any failure."""
     p = cfg["polish"]

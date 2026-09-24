@@ -48,6 +48,11 @@ DEFAULTS = {
     "remove_fillers": True,
     # Write spoken numbers as digits: "four and a half percent" -> "4.5%", "the fourteenth" -> "the 14th".
     "numbers_as_digits": True,
+    # In email apps, lay dictation out as an email: "Hey Ben," / body / "Thanks," on their own lines.
+    "email_formatting": True,
+    # Where that happens: a program ("outlook.exe") or a word in the window title ("Gmail", for the browser).
+    "email_apps": ["outlook.exe", "olk.exe", "hxoutlook.exe", "thunderbird.exe", "mailclient.exe",
+                   "superhuman.exe", "Gmail", "Outlook", "Yahoo Mail", "Proton Mail", "Fastmail"],
     "beep": False,
     "min_recording_seconds": 0.35,
     # Days of dictation history to keep: 0 keeps everything, -1 saves none.

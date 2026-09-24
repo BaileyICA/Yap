@@ -7,7 +7,7 @@ import winsound
 
 import keyboard
 import pystray
-from . import autostart, config, history, inputwatch, textproc
+from . import apps, autostart, config, history, inputwatch, textproc
 from .audio import Recorder, SAMPLE_RATE
 from .branding import icon as _icon
 from .inject import erase, insert
@@ -262,6 +262,7 @@ class App:
                 scratched = undo and self._scratch_last(allowance)
                 text = textproc.clean(raw, self.cfg)
                 text = textproc.polish(text, self.cfg)
+                text = self._format_for_app(text)
                 if text:
                     if self.cfg["add_trailing_space"]:
                         text += " "
@@ -282,6 +283,16 @@ class App:
                 self.state = "idle"
                 self.overlay.hide()
                 self._tray_status()
+
+    def _format_for_app(self, text):
+        """Shape the text for the app it's going into: emails get greeting and sign-off lines."""
+        if not text or not self.cfg["email_formatting"]:
+            return text
+        exe, title = apps.foreground()
+        if apps.matches(self.cfg["email_apps"], exe, title):
+            self.log(f"Email formatting for {exe or title!r}")
+            return textproc.format_email(text)
+        return text
 
     def _undo_ready(self, allowance):
         """True if the caret is still right after the last dictation: same window, nothing typed or clicked."""
@@ -317,6 +328,10 @@ class App:
         config.save_updates(microphone=name)
         self.cfg["microphone"] = name
         self.recorder.microphone = name
+
+    def set_email_formatting(self, on):
+        config.save_updates(email_formatting=bool(on))
+        self.cfg["email_formatting"] = bool(on)
 
     def set_overlay_style(self, style):
         """Save the speaking visual and switch the pill to it now, with a short preview when idle."""
