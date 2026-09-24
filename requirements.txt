@@ -6,6 +6,7 @@ onnx-asr==0.12.0
 # CPU build. For an NVIDIA GPU, swap in requirements-gpu.txt (see README).
 onnxruntime>=1.30
 Pillow>=12.0
+pyperclip==1.11.0
 pystray==0.19.5
 sounddevice>=0.5
 SoundCard==0.4.6
