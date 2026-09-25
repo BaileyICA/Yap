@@ -1161,12 +1161,14 @@ class Window:
                     9, MUTED, wrap=True).pack(anchor="w", fill="x", pady=(0, px(14)))
         fields = tk.Frame(models, bg=CARD)
         fields.pack(fill="x")
-        fields.grid_columnconfigure((0, 1, 2), weight=1, uniform="models")
+        fields.grid_columnconfigure((0, 1, 2, 3), weight=1, uniform="models")
         self.engine_var = tk.StringVar(self.root, value=self.app.cfg["engine"].title())
+        self.device_var = tk.StringVar(self.root, value=self.app.cfg.get("inference_device", "auto").title())
         self.gpu_model_var = tk.StringVar(self.root, value=self.app.cfg["gpu_model"])
         self.cpu_model_var = tk.StringVar(self.root, value=self.app.cfg["cpu_model"])
         for column, (name, var, values, state) in enumerate((
                 ("Engine", self.engine_var, ENGINES, "readonly"),
+                ("Run on", self.device_var, ("Auto", "GPU", "CPU"), "readonly"),
                 ("Whisper GPU model", self.gpu_model_var, GPU_MODELS, "normal"),
                 ("Whisper CPU model", self.cpu_model_var, CPU_MODELS, "normal"))):
             field = tk.Frame(fields, bg=CARD)
@@ -1176,8 +1178,8 @@ class Window:
                          state=state).pack(fill="x")
         actions = tk.Frame(models, bg=CARD)
         actions.pack(fill="x", pady=(px(16), 0))
-        Button(actions, "Save models", self._save_models, icon=GLYPH["save"], size=9).pack(side="right")
-        self.model_save_status = self._label(actions, "Changes take effect after restarting Yap.", 9, FAINT)
+        Button(actions, "Save speech settings", self._save_models, icon=GLYPH["save"], size=9).pack(side="right")
+        self.model_save_status = self._label(actions, "Auto tries GPU, then falls back to CPU. Restart Yap to apply.", 9, FAINT)
         self.model_save_status.pack(side="left")
 
         self._section(page, "Meeting notes")
@@ -1499,20 +1501,23 @@ class Window:
 
     def _save_models(self):
         engine = self.engine_var.get().strip().lower()
+        inference_device = self.device_var.get().strip().lower()
         gpu_model = self.gpu_model_var.get().strip()
         cpu_model = self.cpu_model_var.get().strip()
         if not gpu_model or not cpu_model:
             messagebox.showerror("Could not save models", "Choose both a GPU model and a CPU fallback model.", parent=self.root)
             return
         try:
-            config.save_updates(engine=engine, gpu_model=gpu_model, cpu_model=cpu_model)
+            config.save_updates(engine=engine, inference_device=inference_device,
+                                gpu_model=gpu_model, cpu_model=cpu_model)
         except (OSError, ValueError, TypeError) as exc:
             messagebox.showerror("Could not save models", str(exc), parent=self.root)
             return
         self.app.cfg["engine"] = engine
+        self.app.cfg["inference_device"] = inference_device
         self.app.cfg["gpu_model"] = gpu_model
         self.app.cfg["cpu_model"] = cpu_model
-        self.model_save_status.configure(text="Saved — restart Yap to load the new model.", fg=GREEN)
+        self.model_save_status.configure(text="Saved — restart Yap to apply the speech settings.", fg=GREEN)
 
     # ----------------------------------------------------- dictionary ----
 

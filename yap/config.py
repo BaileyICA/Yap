@@ -36,6 +36,8 @@ DEFAULTS = {
     "language": "en",
     # "parakeet" (NVIDIA Parakeet: fast, accurate English) or "whisper" (multilingual).
     "engine": "parakeet",
+    # "auto" (try GPU, then CPU), "gpu" (require a supported NVIDIA GPU), or "cpu".
+    "inference_device": "auto",
     # onnx-asr model name. "nemo-parakeet-tdt-0.6b-v3" adds 24 other European languages.
     "parakeet_model": "nemo-parakeet-tdt-0.6b-v2",
     # Whisper GPU model (needs NVIDIA + CUDA). Falls back to cpu_model automatically.

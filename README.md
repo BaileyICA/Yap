@@ -62,10 +62,11 @@ A name after the sign-off ("…thanks, Bailey") goes on the line below it. A dic
 
 ## Settings
 
-Open **Yap → Settings** to choose the speech engine (Parakeet or Whisper) and the Whisper models. Engine and model changes take effect after restarting Yap. Advanced settings remain available in `config.json` (created on first run; restart to apply).
+Open **Yap → Settings → Speech model** to choose the speech engine, where to run it, and the Whisper models. **Auto** tries an NVIDIA GPU and falls back to CPU; **GPU** requires a working CUDA setup; **CPU** keeps transcription on the CPU. Changes take effect after restarting Yap. The downloadable Windows build includes the CPU ONNX runtime, so Parakeet GPU mode requires running from source with the GPU dependencies installed (see above). Advanced settings remain available in `config.json` (created on first run; restart to apply).
 
 - `microphone` — the input to record from (pick it under **Settings → Microphone**, with a **Test** level meter); empty uses the Windows default, and Yap falls back to the default if the chosen mic is unplugged
 - `engine` — `parakeet` (default; fastest and most accurate for English) or `whisper` (other languages)
+- `inference_device` — `auto` (default; GPU then CPU), `gpu` (require GPU), or `cpu`
 - `parakeet_model` — `nemo-parakeet-tdt-0.6b-v2` (English) or `nemo-parakeet-tdt-0.6b-v3` (25 European languages)
 - `vocabulary` — names/jargon to spell your way. Near-misses in a transcript are snapped to these (`Greymont` → `Graymont`, `Lamin-X` → `Laminex`); Whisper also uses them as a hint
 - `numbers_as_digits` — write spoken numbers as digits (`the fourteenth` → `the 14th`, `four and a half percent` → `4.5%`, `twenty twenty six` → `2026`); numbers under ten stay words unless they carry a unit (`5 pm`, `3%`)

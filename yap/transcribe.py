@@ -40,6 +40,9 @@ class Transcriber:
         self.cfg = cfg
         self.log = log
         self.engine = cfg.get("engine", "parakeet")
+        self.device_preference = cfg.get("inference_device", "auto").lower()
+        if self.device_preference not in ("auto", "gpu", "cpu"):
+            self.device_preference = "auto"
         self.model = None
         self.vad = None
         self.device = None
@@ -80,7 +83,7 @@ class Transcriber:
         if self.name.endswith("-v2") and self.cfg["language"] != "en":
             self.log(f"{self.name} only understands English; use nemo-parakeet-tdt-0.6b-v3 or Whisper for other languages.")
         silence = np.zeros(16000, dtype=np.float32)
-        if "CUDAExecutionProvider" in ort.get_available_providers():
+        if self.device_preference != "cpu" and "CUDAExecutionProvider" in ort.get_available_providers():
             try:
                 self.log(f"Loading {self.name} on GPU...")
                 model = self._parakeet_session(name, ["CUDAExecutionProvider", "CPUExecutionProvider"], None)
@@ -91,9 +94,18 @@ class Transcriber:
                 self.model, self.device = model, "cuda"
                 return
             except Exception as e:  # noqa: BLE001
+                if self.device_preference == "gpu":
+                    raise RuntimeError(f"GPU was selected, but Parakeet could not start on CUDA: {e}") from e
                 self.log(f"GPU unavailable ({type(e).__name__}: {e}); using CPU")
+        elif self.device_preference == "gpu":
+            available = ", ".join(ort.get_available_providers())
+            raise RuntimeError("GPU was selected, but CUDA is unavailable in this Yap installation. "
+                               f"Available ONNX providers: {available or 'none'}")
         else:
-            self.log(f"No CUDA build of ONNX Runtime; loading {self.name} on CPU...")
+            if self.device_preference == "cpu":
+                self.log(f"CPU selected; loading {self.name} on CPU...")
+            else:
+                self.log(f"No CUDA build of ONNX Runtime; loading {self.name} on CPU...")
         # int8 is ~4x smaller and much faster on CPU, for a small accuracy cost.
         self.model = self._parakeet_session(name, ["CPUExecutionProvider"], "int8")
         self.model.recognize(silence)
@@ -154,6 +166,9 @@ class Transcriber:
         from faster_whisper import WhisperModel
 
         silence = np.zeros(16000, dtype=np.float32)
+        if self.device_preference == "cpu":
+            self._load_whisper_cpu(WhisperModel)
+            return
         try:
             # faster-whisper downloads before it checks the device; don't fetch the big GPU model for nothing.
             if ctranslate2.get_cuda_device_count() == 0:
@@ -163,13 +178,19 @@ class Transcriber:
             list(m.transcribe(silence, beam_size=1)[0])  # warm-up; surfaces missing CUDA kernels/DLLs now
             self.model, self.device, self.beam, self.name = m, "cuda", 5, self.cfg["gpu_model"]
         except Exception as e:  # noqa: BLE001
+            if self.device_preference == "gpu":
+                raise RuntimeError(f"GPU was selected, but Whisper could not start on CUDA: {e}") from e
             self.log(f"GPU unavailable ({type(e).__name__}: {e}); using CPU model {self.cfg['cpu_model']} "
                      "(downloads on first run)")
-            self.model = WhisperModel(
-                self.cfg["cpu_model"], device="cpu", compute_type="int8",
-                cpu_threads=int(self.cfg["cpu_threads"]),
-            )
-            self.device, self.beam, self.name = "cpu", 1, self.cfg["cpu_model"]
+            self._load_whisper_cpu(WhisperModel)
+
+    def _load_whisper_cpu(self, WhisperModel):
+        self.log(f"Loading {self.cfg['cpu_model']} on CPU (downloads on first run)...")
+        self.model = WhisperModel(
+            self.cfg["cpu_model"], device="cpu", compute_type="int8",
+            cpu_threads=int(self.cfg["cpu_threads"]),
+        )
+        self.device, self.beam, self.name = "cpu", 1, self.cfg["cpu_model"]
 
     def _whisper_segments(self, audio, **extra):
         lang = self.cfg["language"]
