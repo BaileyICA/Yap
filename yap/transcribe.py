@@ -10,7 +10,14 @@ from . import config
 
 def _add_cuda_dlls():
     """pip-installed nvidia-* wheels keep their DLLs under site-packages/nvidia/*/bin."""
-    for p in sys.path:
+    # PyInstaller extracts bundled CUDA wheels under _MEIPASS; that directory is
+    # not guaranteed to appear in sys.path, but Windows must register the DLL
+    # directories before ONNX Runtime initializes its CUDA provider.
+    roots = list(sys.path)
+    bundle_dir = getattr(sys, "_MEIPASS", None)
+    if bundle_dir:
+        roots.append(bundle_dir)
+    for p in dict.fromkeys(roots):
         for d in glob.glob(os.path.join(p, "nvidia", "*", "bin")):
             try:
                 os.add_dll_directory(d)

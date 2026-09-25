@@ -27,7 +27,9 @@ Errors are written to `data/yap.log`.
 
 First run downloads the speech model once (Parakeet: ~2.5 GB for the GPU, ~650 MB int8 for CPU); after that nothing leaves your PC.
 
-To use an NVIDIA GPU when running from source, swap ONNX Runtime for its CUDA 12 build:
+The Windows download includes the CUDA 12 runtime needed for Parakeet GPU mode. An NVIDIA GPU and a current NVIDIA driver are still required; Auto uses the GPU when available and falls back to CPU otherwise.
+
+To enable an NVIDIA GPU when running from source, swap ONNX Runtime for its CUDA 12 build:
 
 ```
 .venv\Scripts\python -m pip uninstall -y onnxruntime
@@ -62,7 +64,7 @@ A name after the sign-off ("…thanks, Bailey") goes on the line below it. A dic
 
 ## Settings
 
-Open **Yap → Settings → Speech model** to choose the speech engine, where to run it, and the Whisper models. **Auto** tries an NVIDIA GPU and falls back to CPU; **GPU** requires a working CUDA setup; **CPU** keeps transcription on the CPU. Changes take effect after restarting Yap. The downloadable Windows build includes the CPU ONNX runtime, so Parakeet GPU mode requires running from source with the GPU dependencies installed (see above). Advanced settings remain available in `config.json` (created on first run; restart to apply).
+Open **Yap → Settings → Speech model** to choose the speech engine, where to run it, and the Whisper models. **Auto** tries an NVIDIA GPU and falls back to CPU; **GPU** requires an NVIDIA GPU and a working driver; **CPU** keeps transcription on the CPU. Changes take effect after restarting Yap. The downloadable Windows build includes the CUDA runtime libraries for Parakeet GPU mode; source installs still need the GPU dependencies installed as described above. Advanced settings remain available in `config.json` (created on first run; restart to apply).
 
 - `microphone` — the input to record from (pick it under **Settings → Microphone**, with a **Test** level meter); empty uses the Windows default, and Yap falls back to the default if the chosen mic is unplugged
 - `engine` — `parakeet` (default; fastest and most accurate for English) or `whisper` (other languages)
