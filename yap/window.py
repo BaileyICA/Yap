@@ -1227,8 +1227,20 @@ class Window:
     def _check_updates(self):
         if self.update_check_label is not None and self.update_check_label.winfo_exists():
             self.update_check_label.configure(text="Checking...")
-        threading.Thread(target=lambda: self.commands.put(("update_checked", self.app.check_for_updates())),
-                         daemon=True).start()
+
+        def check_and_install():
+            result = self.app.check_for_updates()
+            info = self.app.update_info
+            if (info and result == f"Yap v{info['version']} is available."
+                    and updater.can_self_update(info)):
+                self.app.install_update()
+                if self.app.updating:
+                    result = f"Installing v{info['version']}..."
+                else:
+                    result = "Finish the current recording or meeting, then update."
+            self.commands.put(("update_checked", result))
+
+        threading.Thread(target=check_and_install, daemon=True).start()
 
     def _settings_card(self, parent):
         card = Card(parent, radius=16, pad=(22, 18))
