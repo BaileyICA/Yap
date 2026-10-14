@@ -1,3 +1,4 @@
+av>=12
 faster-whisper==1.2.1
 huggingface-hub>=1.0
 keyboard==0.13.5

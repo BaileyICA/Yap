@@ -14,8 +14,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageTk
 
 from . import audio, autostart, config, history, textproc, updater
 from .branding import BRAND_NAVY, icon as yap_icon
-from .meeting_notes import transcript_text
-from .meetings import list_meetings, load_meeting, save_meeting
+from .meetings import list_meetings, load_meeting
 from .overlay import STYLES as OVERLAY_STYLES
 
 BG = "#0b0d12"
@@ -365,7 +364,7 @@ def _when(stamp):
     return f"{moment.strftime('%d %b %Y').lstrip('0')}, {clock}"
 
 
-STATUS_COLORS = {"ready": GREEN, "processing": AMBER, "recording": RED, "error": RED}
+STATUS_COLORS = {"saved": GREEN, "recording": RED}
 
 
 # ----------------------------------------------------------------- window ----
@@ -379,10 +378,6 @@ class Window:
         self.page = "Home"
         self.selected_folder = None
         self.status_text = "Loading speech model..."
-        self.detail_tab = "Notes"
-        self.notes_box = None
-        self.name_entries = {}
-        self.saved_names = {}
         self.title_entry = None
         self.title_draft = ""
         self.meeting_status_label = None
@@ -575,7 +570,7 @@ class Window:
             return RED, "Needs attention"
         if self.app.meeting_capture or state in ("recording", "meeting"):
             return RED, "Recording"
-        if state in ("loading", "busy", "meeting_starting", "meeting_saving") or self.app.meetings_pending:
+        if state in ("loading", "busy", "meeting_starting", "meeting_saving"):
             return AMBER, "Loading" if state == "loading" else "Working"
         return GREEN, "Ready"
 
@@ -636,13 +631,10 @@ class Window:
             handler(event)
 
     def _navigate(self, page):
-        if page != self.page:
-            self._save_detail()
         self.page = page
         self._render()
 
     def _close(self):
-        self._save_detail()
         self.root.withdraw()
 
     def _render(self):
@@ -721,9 +713,9 @@ class Window:
         Button(row, "Start a meeting", lambda: self._navigate("Meetings"), icon=GLYPH["record"]).pack(side="right")
         words = tk.Frame(row, bg=CARD)
         words.pack(side="left", fill="x", expand=True, padx=(0, px(16)))
-        self._label(words, "Meeting notes", 13, bold=True, display=True).pack(anchor="w")
-        self._label(words, "Record your mic and computer audio. Yap transcribes, groups voices and "
-                           "writes notes after you stop.", 9, MUTED, wrap=True).pack(anchor="w", fill="x",
+        self._label(words, "Meeting recorder", 13, bold=True, display=True).pack(anchor="w")
+        self._label(words, "Record your mic, computer audio and screen to files you can hand to "
+                           "any transcription tool.", 9, MUTED, wrap=True).pack(anchor="w", fill="x",
                                                                                     pady=(px(4), 0))
 
         if meetings:
@@ -830,7 +822,6 @@ class Window:
         return row
 
     def _open_meeting(self, folder):
-        self._save_detail()
         self.selected_folder = folder
         self.page = "Meetings"
         self._render()
@@ -838,7 +829,7 @@ class Window:
     # ------------------------------------------------------- meetings ----
 
     def _meetings(self):
-        self._header(self.main, "Meetings", "Your recordings and notes stay on this computer.")
+        self._header(self.main, "Meetings", "Your recordings stay on this computer.")
         body = tk.Frame(self.main, bg=BG)
         body.pack(fill="both", expand=True, padx=px(36), pady=(0, px(28)))
         left = tk.Frame(body, bg=BG, width=px(280))
@@ -859,7 +850,7 @@ class Window:
             self.recording_label = self._label(box, _clock(elapsed), 28, bold=True, display=True)
             self.recording_label.pack(anchor="w", pady=(px(6), 0))
             self._label(box, capture.title, 9, MUTED, wrap=True).pack(anchor="w", fill="x", pady=(0, px(14)))
-            Button(box, "Stop & process", self.app.stop_meeting, "danger", GLYPH["stop"]).pack(fill="x")
+            Button(box, "Stop & save", self.app.stop_meeting, "danger", GLYPH["stop"]).pack(fill="x")
         else:
             self._label(box, "New recording", 12, bold=True, display=True).pack(anchor="w")
             field = Card(box, fill=FIELD, border=BORDER, radius=10, pad=(12, 8))
@@ -895,6 +886,11 @@ class Window:
             self.computer_var = tk.BooleanVar(self.root, value=True)
             Switch(toggle, self.computer_var).pack(side="right")
             self._label(toggle, "Include computer audio", 9, MUTED).pack(side="left")
+            screen = tk.Frame(box, bg=CARD)
+            screen.pack(fill="x", pady=(0, px(14)))
+            self.screen_var = tk.BooleanVar(self.root, value=True)
+            Switch(screen, self.screen_var).pack(side="right")
+            self._label(screen, "Record screen", 9, MUTED).pack(side="left")
             if self.app.state in ("meeting_starting", "meeting_saving"):
                 Chip(box, "Working…", AMBER).pack(anchor="w")
             else:
@@ -921,7 +917,7 @@ class Window:
     def _meetings_key(self, meetings=None):
         """What the Meetings page shows, so a status message only rebuilds it when this changes."""
         meetings = list_meetings() if meetings is None else meetings
-        return (self.app.state, self.app.meeting_capture is not None, frozenset(self.app.meetings_pending),
+        return (self.app.state, self.app.meeting_capture is not None,
                 tuple((item["folder"], item.get("status")) for item in meetings))
 
     def _start(self):
@@ -929,10 +925,9 @@ class Window:
         if title == PLACEHOLDER and self.title_entry.cget("fg") == FAINT:
             title = ""
         self.title_draft = ""
-        self.app.start_meeting(title, self.computer_var.get())
+        self.app.start_meeting(title, self.computer_var.get(), self.screen_var.get())
 
     def _select_meeting(self, folder):
-        self._save_detail()
         self.selected_folder = folder
         self._render()
 
@@ -940,15 +935,12 @@ class Window:
         box = self.detail.body
         for child in box.winfo_children():
             child.destroy()
-        self.notes_box = None
-        self.name_entries = {}
-        self.saved_names = {}
         if not self.selected_folder:
             empty = tk.Frame(box, bg=CARD)
             empty.place(relx=0.5, rely=0.45, anchor="center")
             tk.Label(empty, text=GLYPH["Meetings"], bg=CARD, fg=FAINT, font=icon_font(28)).pack()
             self._label(empty, "No meeting selected", 12, bold=True, display=True).pack(pady=(px(12), px(2)))
-            self._label(empty, "Pick one on the left to see its notes and transcript.", 9, MUTED).pack()
+            self._label(empty, "Pick one on the left to open its recording files.", 9, MUTED).pack()
             return
         try:
             data = load_meeting(self.selected_folder)
@@ -957,95 +949,36 @@ class Window:
             self._show_detail()
             return
 
-        self.saved_names = {k: v for k, v in data.get("speaker_names", {}).items() if v}
+        folder = self.selected_folder
         head = tk.Frame(box, bg=CARD)
         head.pack(fill="x")
-        actions = tk.Frame(head, bg=CARD)
-        actions.pack(side="right", anchor="n")
-        folder = self.selected_folder
-        Button(actions, "", lambda: os.startfile(folder), "ghost", GLYPH["folder"], size=11).pack(side="right")
-        if data.get("turns"):
-            copy = Button(actions, "", lambda: self._copy_transcript(data["turns"], copy), "ghost", GLYPH["copy"],
-                          size=11)
-            copy.pack(side="right")
-        Button(actions, "Save", self._save_detail, "secondary", GLYPH["save"]).pack(side="right", padx=(0, px(6)))
+        Button(head, "", lambda: os.startfile(folder), "ghost", GLYPH["folder"], size=11).pack(side="right",
+                                                                                             anchor="n")
         words = tk.Frame(head, bg=CARD)
         words.pack(side="left", fill="x", expand=True)
         self._label(words, data["title"], 15, bold=True, display=True, wrap=True).pack(anchor="w", fill="x")
         meta = [_when(data.get("created"))]
         if data.get("duration"):
             meta.append(_clock(int(data["duration"])))
-        if data.get("attribution"):
-            meta.append(data["attribution"])
         self._label(words, "  ·  ".join(m for m in meta if m), 9, MUTED, wrap=True).pack(
             anchor="w", fill="x", pady=(px(3), 0))
 
         if data.get("capture_warning"):
             self._banner(box, data["capture_warning"], AMBER)
-        if folder in self.app.meetings_pending:
-            self._banner(box, "Processing — notes will appear here when it finishes.", AMBER)
-        elif data.get("status") == "error":
-            self._banner(box, data.get("error", "Processing failed"), RED,
-                         ("Retry", lambda: self.app.reprocess_meeting(folder), GLYPH["retry"]))
-        elif data.get("status") in ("recording", "processing"):
-            self._banner(box, "Notes will appear here once processing finishes.", AMBER)
+        if data.get("status") == "recording":
+            self._banner(box, "This recording was interrupted. The files below hold what was captured.", AMBER)
 
-        if data.get("turns"):
-            people = sorted({t["speaker"] for t in data["turns"] if t["speaker"] != "Unclear speaker"})
-            if people:
-                names = tk.Frame(box, bg=CARD)
-                names.pack(fill="x", pady=(px(16), 0))
-                self._label(names, "SPEAKERS  ·  rename after listening", 8, FAINT, bold=True).pack(
-                    anchor="w", pady=(0, px(6)))
-                flow = tk.Frame(names, bg=CARD)
-                flow.pack(fill="x")
-                for index, speaker in enumerate(people):
-                    field = Card(flow, fill=FIELD, border=BORDER, radius=9, pad=(10, 5))
-                    field.grid(row=index // 2, column=index % 2, sticky="ew", padx=(0, px(8)), pady=px(3))
-                    inner = field.body
-                    tk.Label(inner, text=speaker, bg=FIELD, fg=FAINT, font=font(8)).pack(side="left")
-                    e = tk.Entry(inner, bg=FIELD, fg=TEXT, insertbackground=TEXT, relief="flat", width=14,
-                                 font=font(9), highlightthickness=0, bd=0)
-                    e.insert(0, self.saved_names.get(speaker, ""))
-                    e.pack(side="left", fill="x", expand=True, padx=(px(8), 0))
-                    e.bind("<FocusIn>", lambda _e, f=field: f.repaint(border=ACCENT))
-                    e.bind("<FocusOut>", lambda _e, f=field: f.repaint(border=BORDER))
-                    self.name_entries[speaker] = e
-                for column in range(min(2, len(people))):
-                    flow.grid_columnconfigure(column, weight=1, uniform="speakers")
-
-        tabs = tk.Frame(box, bg=CARD)
-        tabs.pack(fill="x", pady=(px(18), px(10)))
-        pages = tk.Frame(box, bg=CARD)
-        pages.pack(fill="both", expand=True)
-
-        notes_card = Card(pages, fill=FIELD, border=BORDER, radius=12, pad=(4, 4), stretch=True)
-        self.notes_box = self._text(notes_card.body)
-        self.notes_box.insert("1.0", data.get("notes", "Processing will begin after you stop recording."))
-        self.notes_box.edit_modified(False)
-        transcript_card = Card(pages, fill=FIELD, border=BORDER, radius=12, pad=(4, 4), stretch=True)
-        transcript = self._text(transcript_card.body)
-        transcript.insert("1.0", transcript_text(data.get("turns", []), data.get("speaker_names", {})))
-        transcript.configure(state="disabled")
-
-        segments = Card(tabs, fill=FIELD, border=BORDER, radius=11, pad=(3, 3), hug=True)
-        segments.pack(side="left")
-        buttons = {}
-
-        def choose(name):
-            self.detail_tab = name
-            for key, card in (("Notes", notes_card), ("Transcript", transcript_card)):
-                if key == name:
-                    card.pack(fill="both", expand=True)
-                else:
-                    card.pack_forget()
-                buttons[key].kind = "secondary" if key == name else "ghost"
-                buttons[key].repaint()
-
-        for name in ("Notes", "Transcript"):
-            buttons[name] = Button(segments.body, name, lambda n=name: choose(n), "ghost", size=9)
-            buttons[name].pack(side="left")
-        choose(self.detail_tab)
+        self._label(box, "FILES  ·  hand these to your transcription tool", 8, FAINT, bold=True).pack(
+            anchor="w", pady=(px(18), px(6)))
+        for name in sorted(os.listdir(folder)):
+            path = os.path.join(folder, name)
+            if not name.lower().endswith((".mp4", ".wav", ".txt", ".md")):
+                continue
+            row = Card(box, fill=FIELD, border=BORDER, radius=10, pad=(14, 9))
+            row.pack(fill="x", pady=px(3))
+            Button(row.body, "Open", lambda p=path: os.startfile(p), "secondary", size=9).pack(side="right")
+            self._label(row.body, name, 10, bold=True).pack(side="left")
+            self._label(row.body, f"{os.path.getsize(path) / 1e6:.1f} MB", 9, MUTED).pack(side="left", padx=(px(10), 0))
 
     def _text(self, parent):
         box = tk.Text(parent, wrap="word", bg=FIELD, fg=TEXT, insertbackground=TEXT, relief="flat", bd=0,
@@ -1077,40 +1010,11 @@ class Window:
         words.pack(side="left", fill="x", expand=True, padx=(px(8), px(8)))
         self._label(words, text, 9, color, wrap=True).pack(anchor="w", fill="x")
 
-    def _copy_transcript(self, turns, button):
-        # Use the names typed in the speaker fields, even if they haven't been saved yet.
-        names = {key: field.get().strip() for key, field in self.name_entries.items()
-                 if field.winfo_exists() and field.get().strip()}
-        self._copy(transcript_text(turns, names), button)
-
-    def _save_detail(self):
-        if not self.selected_folder or self.notes_box is None or not self.notes_box.winfo_exists():
-            return
-        names = {key: field.get().strip() for key, field in self.name_entries.items()
-                 if field.winfo_exists() and field.get().strip()}
-        notes_changed = self.notes_box.edit_modified()
-        if not notes_changed and names == self.saved_names:
-            return  # nothing edited; don't overwrite notes that finished processing in the meantime
-        try:
-            data = load_meeting(self.selected_folder)
-            if notes_changed:
-                data["notes"] = self.notes_box.get("1.0", "end").rstrip()
-            data["speaker_names"] = names
-            save_meeting(self.selected_folder, data)
-            with open(os.path.join(self.selected_folder, "notes.md"), "w", encoding="utf-8") as f:
-                f.write(data["notes"] + "\n")
-            with open(os.path.join(self.selected_folder, "transcript.txt"), "w", encoding="utf-8") as f:
-                f.write(transcript_text(data.get("turns", []), data["speaker_names"]) + "\n")
-            self.notes_box.edit_modified(False)
-            self.saved_names = names
-        except (OSError, ValueError) as exc:
-            messagebox.showerror("Could not save meeting", str(exc), parent=self.root)
-
     # ------------------------------------------------------- settings ----
 
     def _settings(self):
         page = self._scroll_area(self.main)
-        self._header(page, "Settings", "Control how Yap listens and processes notes.")
+        self._header(page, "Settings", "Control how Yap listens.")
 
         self._section(page, "Dictation", pady=(0, px(10)))
         card = self._settings_card(page)
@@ -1182,11 +1086,8 @@ class Window:
         self.model_save_status = self._label(actions, "Auto tries GPU, then falls back to CPU. Restart Yap to apply.", 9, FAINT)
         self.model_save_status.pack(side="left")
 
-        self._section(page, "Meeting notes")
+        self._section(page, "Meeting recordings")
         notes = self._settings_card(page)
-        self._label(notes, "Speech and speaker matching run locally. Detailed notes use Ollama with "
-                           "llama3.2:3b. If it is unavailable, Yap saves the transcript and basic highlights.",
-                    9, MUTED, wrap=True).pack(anchor="w", fill="x")
         folder = os.path.join(config.DATA_DIR, "meetings")
         where = tk.Frame(notes, bg=CARD)
         where.pack(fill="x", pady=(px(14), 0))
@@ -1795,7 +1696,6 @@ class Window:
         if self.page != "Meetings":
             return
         if self._meetings_key() != self.meetings_view:
-            self._save_detail()
             self._render()
         elif self.meeting_status_label is not None and self.meeting_status_label.winfo_exists():
             self.meeting_status_label.configure(text=self.status_text)
@@ -1806,7 +1706,6 @@ class Window:
             while True:
                 cmd, payload = self.commands.get_nowait()
                 if cmd == "show":
-                    self._save_detail()
                     if payload:
                         self.page = payload
                     self.root.deiconify()
@@ -1835,7 +1734,6 @@ class Window:
         except queue.Empty:
             pass
         if changed:
-            self._save_detail()
             self._render()
         elif status_changed:
             self._refresh_status()

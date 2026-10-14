@@ -18,6 +18,7 @@ for package in (
     "nvidia.cufft",
     "nvidia.curand",
     "soundcard",
+    "av",
 ):
     package_datas, package_binaries, package_hiddenimports = collect_all(package)
     datas += package_datas

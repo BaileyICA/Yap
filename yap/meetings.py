@@ -1,4 +1,4 @@
-"""Record both sides of a meeting to local WAV files, then prepare transcripts."""
+"""Record a meeting to local files: microphone and computer audio as WAV, the screen as MP4."""
 
 import json
 import os
@@ -8,14 +8,18 @@ import threading
 import time
 import wave
 from datetime import datetime
+from fractions import Fraction
 
 import numpy as np
 import soundcard as sc
+from PIL import ImageGrab
 
 from . import config
 from .audio import open_input
 
 RATE = 16000
+SCREEN_FPS = 5
+SCREEN_MAX_WIDTH = 1920
 MEETINGS_DIR = os.path.join(config.DATA_DIR, "meetings")
 
 
@@ -31,15 +35,8 @@ def _writer(path):
     return f
 
 
-def read_wav(path):
-    with wave.open(path, "rb") as f:
-        if f.getframerate() != RATE or f.getnchannels() != 1 or f.getsampwidth() != 2:
-            raise ValueError(f"Unsupported recording format: {path}")
-        return np.frombuffer(f.readframes(f.getnframes()), dtype="<i2").astype(np.float32) / 32768
-
-
 class MeetingCapture:
-    def __init__(self, title, computer_audio=True, microphone="", log=None):
+    def __init__(self, title, computer_audio=True, microphone="", log=None, screen=True):
         os.makedirs(MEETINGS_DIR, exist_ok=True)
         self.created = datetime.now()
         self.id = self.created.strftime("%Y%m%d-%H%M%S-%f")
@@ -47,10 +44,13 @@ class MeetingCapture:
         os.makedirs(self.folder)
         self.title = title.strip() or self.created.strftime("Meeting %d %b %Y, %I:%M %p")
         self.computer_audio = computer_audio
+        self.screen = screen
         self.microphone = microphone
         self.log = log
         self.mic_path = os.path.join(self.folder, "microphone.wav")
         self.system_path = os.path.join(self.folder, "computer.wav")
+        self.screen_path = os.path.join(self.folder, "screen.mp4")
+        self._screen_error = None
         self._mic_queue = queue.Queue()
         self._stop = threading.Event()
         self._loop_ready = threading.Event()
@@ -89,9 +89,10 @@ class MeetingCapture:
 
         self._mic_stream = open_input(self.microphone, mic_callback, self.log)
         self.started = time.monotonic()
-        t = threading.Thread(target=self._write_mic, daemon=True)
-        t.start()
-        self._threads.append(t)
+        for target in (self._write_mic, *([self._record_screen] if self.screen else [])):
+            t = threading.Thread(target=target, daemon=True)
+            t.start()
+            self._threads.append(t)
         self._write_meta("recording")
 
     def _write_mic(self):
@@ -101,6 +102,42 @@ class MeetingCapture:
                     out.writeframes(_pcm(self._mic_queue.get(timeout=0.2)))
                 except queue.Empty:
                     pass
+
+    def _record_screen(self):
+        # shortcut: primary monitor only, 5 fps; raise SCREEN_FPS or grab per monitor if slides move faster.
+        import av
+
+        try:
+            container = av.open(self.screen_path, "w")
+            try:
+                stream = None
+                origin = time.monotonic()
+                last = -1
+                while not self._stop.is_set():
+                    pts = int((time.monotonic() - origin) * SCREEN_FPS)
+                    if pts <= last:
+                        time.sleep(0.02)
+                        continue
+                    img = ImageGrab.grab().convert("RGB")
+                    if stream is None:
+                        w = min(img.width, SCREEN_MAX_WIDTH) // 2 * 2
+                        h = round(img.height * w / img.width) // 2 * 2
+                        stream = container.add_stream("libx264", rate=SCREEN_FPS)
+                        stream.width, stream.height, stream.pix_fmt = w, h, "yuv420p"
+                        stream.codec_context.time_base = Fraction(1, SCREEN_FPS)
+                        stream.options = {"crf": "30", "preset": "veryfast"}
+                    if img.size != (stream.width, stream.height):
+                        img = img.resize((stream.width, stream.height))
+                    frame = av.VideoFrame.from_image(img)
+                    frame.pts = last = pts
+                    frame.time_base = Fraction(1, SCREEN_FPS)
+                    container.mux(stream.encode(frame))
+                if stream is not None:
+                    container.mux(stream.encode())
+            finally:
+                container.close()
+        except Exception as exc:
+            self._screen_error = str(exc)
 
     def _record_loopback(self):
         import ctypes
@@ -148,15 +185,17 @@ class MeetingCapture:
             t.join(timeout=4)
         duration = time.monotonic() - self.started if self.started else 0
         offset = (self._loop_started - self.started) if self._loop_started and self.started else 0
-        warning = f"Computer audio capture stopped: {self._loop_error}" if self._loop_error else None
-        self._write_meta("processing", duration=duration, computer_offset=round(offset, 3),
+        warning = " ".join(m for m in (
+            f"Computer audio capture stopped: {self._loop_error}." if self._loop_error else "",
+            f"Screen recording stopped: {self._screen_error}." if self._screen_error else "") if m) or None
+        self._write_meta("saved", duration=duration, computer_offset=round(offset, 3),
                          capture_warning=warning)
         return self.folder
 
     def _write_meta(self, status, **extra):
         path = os.path.join(self.folder, "meeting.json")
         data = {"id": self.id, "title": self.title, "created": self.created.isoformat(timespec="seconds"),
-                "status": status, "computer_audio": self.computer_audio, **extra}
+                "status": status, "computer_audio": self.computer_audio, "screen": self.screen, **extra}
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
@@ -180,11 +219,3 @@ def list_meetings():
 def load_meeting(folder):
     with open(os.path.join(folder, "meeting.json"), encoding="utf-8") as f:
         return json.load(f)
-
-
-def save_meeting(folder, data):
-    path = os.path.join(folder, "meeting.json")
-    temporary = path + ".tmp"
-    with open(temporary, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(temporary, path)

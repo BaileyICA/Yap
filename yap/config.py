@@ -15,7 +15,7 @@ else:
     APP_DATA_DIR = ROOT
     CONFIG_PATH = os.path.join(ROOT, "config.json")
     DATA_DIR = os.path.join(ROOT, "data")
-# Downloaded speech/VAD/speaker models.
+# Downloaded speech/VAD models.
 MODELS_DIR = DATA_DIR if FROZEN else os.path.join(ROOT, "models")
 HISTORY_PATH = os.path.join(DATA_DIR, "history.jsonl")
 LOG_PATH = os.path.join(DATA_DIR, "yap.log")
@@ -77,12 +77,6 @@ DEFAULTS = {
         "model": "llama3.2:3b",
         "style": "Keep my wording and tone; just fix grammar and punctuation.",
         "timeout_seconds": 20,
-    },
-    "meeting_notes": {
-        "use_ollama": True,
-        "ollama_url": "http://localhost:11434",
-        "ollama_model": "llama3.2:3b",
-        "timeout_seconds": 300,
     },
 }
 

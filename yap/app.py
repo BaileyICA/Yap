@@ -13,8 +13,7 @@ from .branding import icon as _icon
 from .inject import erase, insert
 from .overlay import Overlay
 from .transcribe import Transcriber
-from .meetings import MeetingCapture, list_meetings
-from .meeting_notes import process_meeting
+from .meetings import MeetingCapture
 from .window import Window
 
 
@@ -61,10 +60,6 @@ class App:
         self.key_capture_callback = None
         self.toggle_hotkey_id = None
         self.meeting_capture = None
-        # Meetings are processed one at a time on their own thread, so dictation keeps working meanwhile.
-        self.meeting_queue = queue.Queue()
-        self.meetings_pending = set()
-        self.meeting_lock = threading.Lock()
         self.model_ready = threading.Event()
         self.model_error = None
         # "Scratch that": what the last dictations inserted, newest last, while nothing has been
@@ -253,9 +248,6 @@ class App:
         self._tray_status()
         if self.window:
             self.window.update(f"Ready — speech model on {self.tr.device.upper()}")
-        for item in list_meetings():
-            if item.get("status") == "processing":
-                self.reprocess_meeting(item["folder"])
         while True:
             audio, allowance = self.jobs.get()
             t = time.time()
@@ -384,7 +376,7 @@ class App:
         if not updater.can_self_update(info):
             os.startfile(info["page"])  # running from source, or the exe's folder isn't writable
             return
-        if (self.meeting_capture or self.meetings_pending
+        if (self.meeting_capture
                 or self.state in ("recording", "busy", "meeting_starting", "meeting_saving")):
             self.window.update("Finish the current recording or meeting, then update.")
             return
@@ -448,7 +440,7 @@ class App:
         if color is None:
             if self.state in ("recording", "meeting"):
                 color = "#ff453a"
-            elif self.state in ("loading", "busy", "meeting_starting", "meeting_saving") or self.meetings_pending:
+            elif self.state in ("loading", "busy", "meeting_starting", "meeting_saving"):
                 color = "#ffd60a"
             else:
                 color = "#30d158" if self.enabled else "#8e8e93"
@@ -457,7 +449,7 @@ class App:
                 "loading": "loading model...", "recording": "listening", "busy": "transcribing",
                 "meeting": "recording meeting", "meeting_starting": "starting meeting",
                 "meeting_saving": "saving meeting",
-            }.get(self.state, "processing meeting" if self.meetings_pending else "ready")
+            }.get(self.state, "ready")
         self.tray.icon = _icon(color)
         self.tray.title = f"Yap ({self.tr.device or 'starting'}) - {text}"
 
@@ -465,7 +457,7 @@ class App:
         self.enabled = not self.enabled
         self._tray_status()
 
-    def start_meeting(self, title, computer_audio=True):
+    def start_meeting(self, title, computer_audio=True, screen=True):
         if self.state != "idle" or self.meeting_capture:
             if self.window:
                 self.window.update("Wait until dictation or the speech model finishes.")
@@ -473,11 +465,11 @@ class App:
         self.state = "meeting_starting"
         self._tray_status()
         if self.window:
-            self.window.update("Starting microphone and computer audio...")
+            self.window.update("Starting recording...")
 
         def begin():
             try:
-                capture = MeetingCapture(title, computer_audio, self.cfg["microphone"], self.log)
+                capture = MeetingCapture(title, computer_audio, self.cfg["microphone"], self.log, screen)
                 capture.start()
                 self.meeting_capture = capture
                 self.state = "meeting"
@@ -500,13 +492,13 @@ class App:
         self.state = "meeting_saving"
         self._tray_status()
         if self.window:
-            self.window.update("Saving audio...")
+            self.window.update("Saving recording...")
 
         def finish():
             try:
                 folder = capture.stop()
                 self.log(f"Meeting recording saved: {folder}")
-                self.reprocess_meeting(folder)
+                self.window.update("Recording saved")
             except Exception as exc:  # noqa: BLE001
                 self.log(f"Could not stop meeting: {type(exc).__name__}: {exc}")
                 self.window.update(f"Recording error: {exc}")
@@ -515,37 +507,6 @@ class App:
                 self._tray_status()
 
         threading.Thread(target=finish, daemon=False).start()
-
-    def reprocess_meeting(self, folder):
-        """Queue a saved meeting for transcription and notes; a folder already queued is ignored."""
-        with self.meeting_lock:
-            if folder in self.meetings_pending:
-                return
-            self.meetings_pending.add(folder)
-        self.meeting_queue.put(folder)
-        self._tray_status()
-        if self.window:
-            self.window.update("Waiting for speech model..." if not self.model_ready.is_set() else "Processing meeting...")
-
-    def _meeting_worker(self):
-        progress = lambda msg: self.window.update(msg) if self.window else None  # noqa: E731
-        while True:
-            folder = self.meeting_queue.get()
-            self.model_ready.wait()
-            try:
-                if self.model_error:
-                    progress(f"Speech model unavailable: {self.model_error}")
-                    continue
-                process_meeting(folder, self.tr, self.cfg, progress=progress, log=self.log)
-                self.log(f"Meeting notes ready: {folder}")
-                progress("Meeting notes ready")
-            except Exception as exc:  # noqa: BLE001
-                self.log(f"Meeting processing failed: {type(exc).__name__}: {exc}")
-                progress(f"Meeting processing failed: {exc}")
-            finally:
-                with self.meeting_lock:
-                    self.meetings_pending.discard(folder)
-                self._tray_status()
 
     def _toggle_autostart(self, *_):
         autostart.set_enabled(not autostart.enabled())
@@ -565,7 +526,6 @@ class App:
         self.window = Window(self, visible=show_window)
         threading.Thread(target=_wait_for_open, args=(self.window,), daemon=True).start()
         threading.Thread(target=self.worker, daemon=True).start()
-        threading.Thread(target=self._meeting_worker, daemon=True).start()
         threading.Thread(target=self._update_loop, daemon=True).start()
         inputwatch.start()
         keyboard.hook(self.on_key)
@@ -595,7 +555,7 @@ class App:
         self.log(f"Hold {self.cfg['hold_hotkey']} to dictate; double-tap it (or press {self.cfg['toggle_hotkey']}) for hands-free.")
         self.tray.run()  # blocks until Quit
         if self.meeting_capture:
-            self.meeting_capture.stop()  # leave saved audio for the next launch to process
+            self.meeting_capture.stop()
         keyboard.unhook_all()
 
 

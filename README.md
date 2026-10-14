@@ -88,13 +88,11 @@ History of every dictation is in `data/history.jsonl`. **Settings → Keep dicta
 
 **Settings → Dictionary** lists your vocabulary and learned fixes; add or remove entries there and they apply to the next dictation. To teach Yap from a real mistake, open **History**, click the pencil on a dictation, and correct it. Yap compares your version with what it wrote and offers each changed word as a fix (`Taze → Teys`); names are added to the vocabulary too, so similar mis-hearings get caught as well. Swaps of everyday words (`their → there`) are left unticked, since those are usually grammar edits rather than mis-hearings. Neither speech model is retrained: Yap applies your dictionary to the text after transcription, for dictation and meeting transcripts alike.
 
-## Meeting notes
+## Meeting recordings
 
-Open **Yap → Meetings**, enter an optional title, and click **Start recording**. Yap records your microphone and, when checked, your default Windows speaker output (for Zoom/Teams/browser calls). Click **Stop & process** when the meeting ends. Ten minutes of audio is fine; transcription and note generation happen afterward and may take several minutes, especially on CPU.
+Open **Yap → Meetings**, enter an optional title, and click **Start recording**. Yap records your microphone, your default Windows speaker output (for Zoom/Teams/browser calls, optional) and your primary screen (optional). Click **Stop & save** when the meeting ends. Yap does no transcription or note-taking for meetings; hand the files to a separate tool.
 
-Each meeting stays in `data/meetings/<timestamp>/` with separate microphone and computer WAV files, `transcript.txt`, `notes.md`, and `meeting.json`. Yap attempts to group recurring voices as **Speaker 1**, **Speaker 2**, etc. It cannot infer people's real names from their voices; rename the speakers in the meeting detail screen, review the transcript, and save your edits. Overlapping voices, speakerphone echo, and short turns can affect attribution.
-
-For detailed notes covering key points, decisions, action items, and open questions, install [Ollama](https://ollama.com), run `ollama pull llama3.2:3b`, and leave Ollama running. Yap will then use it locally after transcription. Without Ollama, Yap still saves the timestamped transcript and a basic highlights page. The speaker model (~26 MB) downloads once, then runs locally. A meeting left in `processing` after quitting is resumed on the next launch.
+Each meeting stays in `data/meetings/<timestamp>/` as `microphone.wav`, `computer.wav`, `screen.mp4` (5 fps, up to 1920 px wide) and `meeting.json`. The screen recording has no sound; the WAV files are 16 kHz mono and the computer audio may start slightly after the microphone (`computer_offset` in `meeting.json`).
 
 On a fresh environment, install Python dependencies with `.venv\Scripts\python -m pip install -r requirements.txt`. The dashboard and meeting capture use the same `python -m yap` launcher as dictation. Auto-start remains tray-only; opening the desktop shortcut shows the window.
 
