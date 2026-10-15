@@ -265,8 +265,9 @@ class App:
                     insert(text, self.cfg["insert_method"])
                     self._remember(text, allowance)
                     self.edit_watch += 1
-                    threading.Thread(target=self._watch_edits, args=(self.edit_watch, text.rstrip()),
-                                     daemon=True).start()
+                    if self.cfg["learn_hand_fixes"]:
+                        threading.Thread(target=self._watch_edits, args=(self.edit_watch, text.rstrip()),
+                                         daemon=True).start()
                     history.append(raw, text, self.cfg["history_days"])
                     self.overlay.show("done", "Done")
                 elif undo:
@@ -361,6 +362,12 @@ class App:
     def set_email_formatting(self, on):
         config.save_updates(email_formatting=bool(on))
         self.cfg["email_formatting"] = bool(on)
+
+    def set_learn_hand_fixes(self, on):
+        config.save_updates(learn_hand_fixes=bool(on))
+        self.cfg["learn_hand_fixes"] = bool(on)
+        if not on:
+            self.edit_watch += 1  # stop watching the last dictation now
 
     def set_overlay_style(self, style):
         """Save the speaking visual and switch the pill to it now, with a short preview when idle."""

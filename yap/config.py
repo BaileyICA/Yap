@@ -55,6 +55,8 @@ DEFAULTS = {
     # Where that happens: a program ("outlook.exe") or a word in the window title ("Gmail", for the browser).
     "email_apps": ["outlook.exe", "olk.exe", "hxoutlook.exe", "thunderbird.exe", "mailclient.exe",
                    "superhuman.exe", "Gmail", "Outlook", "Yahoo Mail", "Proton Mail", "Fastmail"],
+    # After a dictation, notice words fixed by hand in the app and offer to add them to the dictionary.
+    "learn_hand_fixes": True,
     "beep": False,
     "min_recording_seconds": 0.35,
     # Days of dictation history to keep: 0 keeps everything, -1 saves none.

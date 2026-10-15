@@ -1043,6 +1043,11 @@ class Window:
                                                  "and sign-off on their own lines.",
                           lambda parent: Switch(parent, self.email_var, self._set_email_formatting))
         self._divider(card)
+        self.learn_var = tk.BooleanVar(self.root, value=self.app.cfg["learn_hand_fixes"])
+        self._setting_row(card, "Learn from your fixes", "When you correct a dictation by hand, offer to add "
+                                                         "the fix to your dictionary.",
+                          lambda parent: Switch(parent, self.learn_var, self._set_learn_hand_fixes))
+        self._divider(card)
         self.autostart_var = tk.BooleanVar(self.root, value=autostart.enabled())
         self._setting_row(card, "Start with Windows", "Launch quietly into the tray when you sign in.",
                           lambda parent: Switch(parent, self.autostart_var, self._set_autostart))
@@ -1409,6 +1414,13 @@ class Window:
         except (OSError, ValueError, TypeError) as exc:
             messagebox.showerror("Could not save setting", str(exc), parent=self.root)
             self.email_var.set(self.app.cfg["email_formatting"])
+
+    def _set_learn_hand_fixes(self, on):
+        try:
+            self.app.set_learn_hand_fixes(on)
+        except (OSError, ValueError, TypeError) as exc:
+            messagebox.showerror("Could not save setting", str(exc), parent=self.root)
+            self.learn_var.set(self.app.cfg["learn_hand_fixes"])
 
     def _set_autostart(self, on):
         try:
