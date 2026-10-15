@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -32,12 +33,28 @@ def is_newer(latest, current=__version__):
     return a + (0,) * (width - len(a)) > b + (0,) * (width - len(b))
 
 
+def _latest_from_redirect(timeout):
+    """Release info from github.com/.../releases/latest's redirect; the API's per-IP rate limit doesn't apply."""
+    request = urllib.request.Request(RELEASES_PAGE, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        url = response.geturl()
+    tag = url.rsplit("/", 1)[-1]
+    return {"tag_name": tag, "html_url": url, "assets": [{
+        "name": ASSET_NAME,
+        "browser_download_url": f"https://github.com/{REPO}/releases/download/{tag}/{ASSET_NAME}"}]}
+
+
 def check(timeout=10):
     """The latest release if it's newer than this copy, else None. Raises on network errors."""
     request = urllib.request.Request(LATEST_API, headers={
         "Accept": "application/vnd.github+json", "User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        release = json.load(response)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            release = json.load(response)
+    except urllib.error.HTTPError as e:
+        if e.code not in (403, 429):  # rate limited
+            raise
+        release = _latest_from_redirect(timeout)
     tag = release.get("tag_name", "")
     if release.get("draft") or release.get("prerelease") or not is_newer(tag):
         return None
