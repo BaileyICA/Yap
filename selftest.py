@@ -91,7 +91,18 @@ def _text():
         got = textproc.format_email(src)
         if got != want:
             raise RuntimeError(f"email {src!r} -> {got!r}, expected {want!r}")
-    return f"{len(cases)} cleanup cases, {len(emails)} email cases"
+    said = "Ask cloud about it."
+    edits = [  # (field after paste, field now, user's version of the dictation)
+        ("Hi. Ask cloud about it. Bye", "Hi. Ask Claude about it. Bye", "Ask Claude about it."),
+        ("Ask cloud about it.", "Ask Claude about it. And more", "Ask Claude about it. And more"),
+        ("Hi. Ask cloud about it.", "Hello. Ask Claude about it.", None),  # edit reaches outside it
+        ("Hi there", "Hi there!", None),  # dictation not in the field
+    ]
+    for before, after, want in edits:
+        got = textproc.edited_dictation(before, after, said)
+        if got != want:
+            raise RuntimeError(f"edit {before!r} -> {after!r} gave {got!r}, expected {want!r}")
+    return f"{len(cases)} cleanup cases, {len(emails)} email cases, {len(edits)} edit cases"
 
 
 def _model():

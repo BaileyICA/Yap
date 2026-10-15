@@ -7,7 +7,7 @@ import winsound
 
 import keyboard
 import pystray
-from . import apps, autostart, config, history, inputwatch, textproc, updater
+from . import apps, autostart, config, history, inputwatch, textproc, uia, updater
 from .audio import Recorder, SAMPLE_RATE
 from .branding import icon as _icon
 from .inject import erase, insert
@@ -68,6 +68,7 @@ class App:
         self.undo_hwnd = 0
         self.undo_seq = 0
         self.rec_allowance = 0  # hotkey presses inputwatch will have counted for this recording
+        self.edit_watch = 0  # bumps per dictation, so only the newest one is watched for hand fixes
         self.update_info = None   # newest release on GitHub, if it's newer than this copy
         self.updating = False
         self.update_notified = None
@@ -263,6 +264,9 @@ class App:
                         text += " "
                     insert(text, self.cfg["insert_method"])
                     self._remember(text, allowance)
+                    self.edit_watch += 1
+                    threading.Thread(target=self._watch_edits, args=(self.edit_watch, text.rstrip()),
+                                     daemon=True).start()
                     history.append(raw, text, self.cfg["history_days"])
                     self.overlay.show("done", "Done")
                 elif undo:
@@ -311,6 +315,36 @@ class App:
         self.undo_seq = inputwatch.seq
         self.log(f"Scratched {text!r}")
         return True
+
+    def _watch_edits(self, watch, dictated):
+        """Offer to learn words the user fixes by hand in the field a dictation just went into."""
+        hwnd, seen = self.undo_hwnd, self.undo_seq
+        for _ in range(3):  # give the app a moment to show the paste
+            time.sleep(0.3)
+            before = uia.focused_text()
+            if before and dictated in before:
+                break
+        else:
+            return  # this field can't be read, or the app changed the text as it went in
+        last, quiet = seen, time.monotonic()
+        deadline = quiet + 120
+        while self.edit_watch == watch and time.monotonic() < deadline and inputwatch.foreground() == hwnd:
+            time.sleep(0.5)
+            if inputwatch.seq != last:
+                last, quiet = inputwatch.seq, time.monotonic()
+                continue
+            if last == seen or time.monotonic() - quiet < 2:
+                continue  # nothing typed yet, or still typing
+            seen = last  # check each pause in typing once
+            fixed = textproc.edited_dictation(before, uia.focused_text() or "", dictated)
+            rules = textproc.learn_corrections(dictated, fixed) if fixed else []
+            # Grammar fixes ("their" -> "there") don't interrupt; a name typed over a word ("cloud" -> "Claude") does.
+            if self.window and any(rule["suggested"] or (rule["written"][:1].isupper()
+                                                         and rule["written"].lower() not in textproc._COMMON)
+                                   for rule in rules):
+                self.log(f"Hand fix spotted: {dictated!r} -> {fixed!r}")
+                self.window.offer_fixes(rules)
+                return
 
     def set_history_days(self, days):
         """Save the history retention setting and apply it now. Returns how many entries were removed."""

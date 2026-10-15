@@ -385,12 +385,17 @@ class Window:
         self.mic_test = None
         self.update_check_label = None
         self.update_check_message = None
+        self.learn_dialog = None
         self._ready = threading.Event()
         threading.Thread(target=self._run, daemon=True).start()
         self._ready.wait(5)
 
     def show(self, page=None):
         self.commands.put(("show", page))
+
+    def offer_fixes(self, rules):
+        """Ask, over whatever app is in front, whether to learn words the user just fixed by hand."""
+        self.commands.put(("learn", rules))
 
     def update(self, status):
         """Show a status message. Never switches page or rebuilds one the user may be typing in."""
@@ -1639,6 +1644,22 @@ class Window:
         dialog.update_idletasks()
         _dark_title_bar(dialog)
 
+    def _learn_prompt(self, rules):
+        if self.learn_dialog is not None and self.learn_dialog.winfo_exists():
+            self.learn_dialog.destroy()
+        dialog = self.learn_dialog = tk.Toplevel(self.root)  # not transient: the main window may be hidden
+        dialog.title("Update dictionary")
+        dialog.configure(bg=CARD)
+        dialog.resizable(False, False)
+        dialog.attributes("-topmost", True)
+        dialog.minsize(px(440), 1)
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        body = tk.Frame(dialog, bg=CARD, padx=px(24), pady=px(20))
+        body.pack(fill="both", expand=True)
+        self._offer_fixes(dialog, body, rules)
+        dialog.update_idletasks()
+        _dark_title_bar(dialog)
+
     def _offer_fixes(self, dialog, body, rules):
         for child in body.winfo_children():
             child.destroy()
@@ -1719,6 +1740,8 @@ class Window:
                     self.root.lift()
                     self.root.focus_force()
                     changed = True
+                elif cmd == "learn":
+                    self._learn_prompt(payload)
                 elif cmd == "update":
                     self.status_text = payload or self.status_text
                     status_changed = True

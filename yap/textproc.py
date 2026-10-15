@@ -253,6 +253,27 @@ def learn_corrections(before, after):
     return rules
 
 
+def edited_dictation(before, after, dictated):
+    """The user's version of `dictated`, from a field that read `before` just after the paste and `after` now.
+
+    None if the dictation isn't in `before` or the edit reaches outside it (they changed something else).
+    """
+    start = before.rfind(dictated)
+    if start < 0 or before == after:
+        return None
+    end = start + len(dictated)
+    limit = min(len(before), len(after))
+    same_start = 0
+    while same_start < limit and before[same_start] == after[same_start]:
+        same_start += 1
+    same_end = 0
+    while same_end < limit - same_start and before[-1 - same_end] == after[-1 - same_end]:
+        same_end += 1
+    if same_start < start or len(before) - same_end > end:
+        return None
+    return after[start:len(after) - (len(before) - end)]
+
+
 # ---- spoken numbers -> digits ("four and a half percent" -> "4.5%") ----
 _UNITS = {w: n for n, w in enumerate(
     "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
