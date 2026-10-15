@@ -504,6 +504,8 @@ class Window:
         tk.Label(private, text=GLYPH["shield"], bg=SIDEBAR, fg=FAINT, font=icon_font(9)).pack(side="left")
         tk.Label(private, text="Private · runs on this PC", bg=SIDEBAR, fg=FAINT,
                  font=font(8)).pack(side="left", padx=(px(6), 0))
+        tk.Label(footer, text=f"Version {updater.__version__}", bg=SIDEBAR, fg=FAINT,
+                 font=font(8)).pack(anchor="w", padx=px(4), pady=(px(4), 0))
 
         self.main = tk.Frame(self.root, bg=BG)
         self.main.pack(side="left", fill="both", expand=True)
