@@ -93,7 +93,7 @@ def _merge(base, over):
     return out
 
 
-class ConfigError(Exception):
+class ConfigError(ValueError):
     """config.json can't be used; the message says where the problem is."""
 
 
@@ -103,6 +103,8 @@ def _read():
             data = json.load(f)
     except json.JSONDecodeError as e:
         raise ConfigError(f"{CONFIG_PATH} has a mistake on line {e.lineno}, column {e.colno}: {e.msg}.") from e
+    except UnicodeDecodeError as e:
+        raise ConfigError(f"{CONFIG_PATH} must be saved as UTF-8.") from e
     if not isinstance(data, dict):
         raise ConfigError(f"{CONFIG_PATH} must hold a JSON object ({{ ... }}).")
     return data

@@ -91,9 +91,11 @@ class Recorder:
     def stop(self):
         if self._stream is None:
             return np.zeros(0, dtype=np.float32)
-        self._stream.stop()
-        self._stream.close()
-        self._stream = None
+        stream, self._stream = self._stream, None
+        try:
+            stream.stop()
+        finally:
+            stream.close()
         with self._lock:
             audio = np.concatenate(self._chunks) if self._chunks else np.zeros(0, dtype=np.float32)
         return audio

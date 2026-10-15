@@ -71,7 +71,7 @@ def count_older(days):
 def _stamp(line):
     try:
         return json.loads(line).get("t", "")
-    except ValueError:
+    except (ValueError, AttributeError):  # hand-edited line that isn't a JSON object
         return ""
 
 
@@ -86,7 +86,7 @@ def prune(days):
     cutoff = _cutoff(days)
     with lock:
         try:
-            with open(config.HISTORY_PATH, encoding="utf-8") as f:
+            with open(config.HISTORY_PATH, encoding="utf-8", errors="replace") as f:
                 lines = f.readlines()
         except OSError:
             return 0

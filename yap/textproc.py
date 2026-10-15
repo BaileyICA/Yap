@@ -3,15 +3,19 @@ import json
 import re
 import urllib.request
 
-_FILLERS = re.compile(r"\b(?:u+m+|u+h+|e+r+m*|a+h+m*|h+m+|m+h*m+)\b[,.]?\s*", re.IGNORECASE)
-_SCRATCH = re.compile(r"(?:[^.!?\n]*?[,;]?\s*)\b(?:scratch that|strike that|delete that)\b[.,!?]?\s*", re.IGNORECASE)
+_FILLERS = re.compile(r"\b(?:u+m+|u+h+|e+r+m*|a+h+m*|h+m+|m+h*m+)\b,?\s*", re.IGNORECASE)
+# The cue must open its sentence or follow a comma, and end its clause: "strike that deal" is prose.
+_SCRATCH = re.compile(r"(?:^|(?<=[.!?\n]))(\s*)(?:[^.!?\n]*?[,;]\s*|[^.!?\n]*[.!?]\s*)?\b(?:scratch|strike) that\b(?=[.,!?;]|\s*$)[.,!?]?\s*",
+                      re.IGNORECASE)
 _COMMANDS = [
     (re.compile(r"[,.]?\s*\bnew paragraph\b[.,]?\s*", re.IGNORECASE), "\n\n"),
     (re.compile(r"[,.]?\s*\b(?:new line|newline|next line)\b[.,]?\s*", re.IGNORECASE), "\n"),
 ]
 
 # A dictation that opens with this removes the previous dictation: "Scratch that." / "Scratch that, meet Friday."
-_UNDO = re.compile(r"^\W*(?:scratch|strike|delete|undo)\s+that\b[\s.,;:!?-]*", re.IGNORECASE)
+# "Delete that email..." is a new sentence, so delete/undo only count when the cue stands alone.
+_UNDO = re.compile(r"^\W*(?:(?:scratch|strike)\s+that\b|(?:delete|undo)\s+that\b(?=\s*(?:[.,;:!?-]|$)))[\s.,;:!?-]*",
+                   re.IGNORECASE)
 
 
 def undo_command(text):
@@ -435,7 +439,7 @@ def format_numbers(text):
 
 
 def clean(text, cfg):
-    text = _SCRATCH.sub("", text)
+    text = _SCRATCH.sub(r"\1", text)
     if cfg["remove_fillers"]:
         text = _FILLERS.sub("", text)
     text = fix_words(text, cfg)
@@ -448,6 +452,7 @@ def clean(text, cfg):
         text = rx.sub(repl, text)
     text = re.sub(r"[ \t]{2,}", " ", text)
     text = re.sub(r" +([,.!?;:])", r"\1", text)
+    text = re.sub(r",(?=[.!?]|\s*$)", "", text)  # "tomorrow, um." would keep its comma before the period
     text = re.sub(r"[ \t]+\n", "\n", text).strip()
     if text and text[0].islower():
         text = text[0].upper() + text[1:]

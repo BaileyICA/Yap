@@ -211,7 +211,7 @@ def list_meetings():
                 item = json.load(f)
             item["folder"] = os.path.dirname(path)
             items.append(item)
-        except (OSError, ValueError):
+        except (OSError, ValueError, TypeError):  # TypeError: meeting.json isn't an object
             pass
     return items
 

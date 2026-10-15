@@ -104,10 +104,13 @@ class App:
             return
         if via:
             self.rec_allowance += _typing_keys(self.hold if via == "hold" else self.toggle)
-        audio = self.recorder.stop()
-        dur = len(audio) / SAMPLE_RATE
+        try:
+            audio = self.recorder.stop()
+        except Exception as e:  # noqa: BLE001  # mic unplugged mid-recording: don't stay stuck "recording"
+            self.log(f"mic error: {e}")
+            audio, discard = None, True
         self.mode = None
-        if discard or dur < self.cfg["min_recording_seconds"]:
+        if discard or len(audio) / SAMPLE_RATE < self.cfg["min_recording_seconds"]:
             self.state = "idle"
             self.overlay.hide()
             self._tray_status()
@@ -214,6 +217,8 @@ class App:
     def set_keybind(self, setting, hotkey):
         if setting not in ("hold_hotkey", "toggle_hotkey", "cancel_key"):
             raise ValueError("Unknown shortcut setting")
+        if setting == "toggle_hotkey":
+            keyboard.parse_hotkey(hotkey)  # raises ValueError before a bad name is saved
         config.save_updates(**{setting: hotkey})
         self.cfg[setting] = hotkey
         if setting == "hold_hotkey":
@@ -562,7 +567,7 @@ class App:
     def run(self, show_window=True):
         try:
             history.prune(self.cfg["history_days"])
-        except OSError as e:
+        except (OSError, ValueError) as e:
             self.log(f"Could not prune history: {e}")
         self.window = Window(self, visible=show_window)
         threading.Thread(target=_wait_for_open, args=(self.window,), daemon=True).start()
@@ -570,7 +575,13 @@ class App:
         threading.Thread(target=self._update_loop, daemon=True).start()
         inputwatch.start()
         keyboard.hook(self.on_key)
-        self.toggle_hotkey_id = keyboard.add_hotkey(self.cfg["toggle_hotkey"], self.on_toggle)
+        try:
+            self.toggle_hotkey_id = keyboard.add_hotkey(self.cfg["toggle_hotkey"], self.on_toggle)
+        except ValueError as e:  # misspelled key in config.json
+            self.log(f"Bad toggle_hotkey, using the default: {e}")
+            self.cfg["toggle_hotkey"] = config.DEFAULTS["toggle_hotkey"]
+            self.toggle = _combo(self.cfg["toggle_hotkey"])
+            self.toggle_hotkey_id = keyboard.add_hotkey(self.cfg["toggle_hotkey"], self.on_toggle)
         self.overlay.show("info", "Loading model...")
         hint = f"Hold {self.cfg['hold_hotkey']} to dictate"
         menu = pystray.Menu(

@@ -65,6 +65,10 @@ def _text():
     cases = [
         ("um so, uh, hello there", "So, hello there"),
         ("meet tuesday, scratch that, meet friday", "Meet friday"),
+        ("Hi. Meet Tuesday. Scratch that. Meet Friday.", "Hi. Meet Friday."),
+        ("can you delete that file for me?", "Can you delete that file for me?"),
+        ("I will strike that deal today.", "I will strike that deal today."),
+        ("let's meet tomorrow, um.", "Let's meet tomorrow."),
         ("line one new line line two", "Line one\nline two"),
         ("meet on tuesday, no wait, wednesday", "Meet on wednesday"),
         ("by thursday the fourteenth, four and a half percent over", "By thursday the 14th, 4.5% over"),
@@ -102,7 +106,13 @@ def _text():
         got = textproc.edited_dictation(before, after, said)
         if got != want:
             raise RuntimeError(f"edit {before!r} -> {after!r} gave {got!r}, expected {want!r}")
-    return f"{len(cases)} cleanup cases, {len(emails)} email cases, {len(edits)} edit cases"
+    undos = [("Scratch that, meet Friday", (True, "meet Friday")), ("Delete that.", (True, "")),
+             ("Delete that email from my drafts", (False, "Delete that email from my drafts"))]
+    for src, want in undos:
+        got = textproc.undo_command(src)
+        if got != want:
+            raise RuntimeError(f"undo {src!r} -> {got!r}, expected {want!r}")
+    return f"{len(cases)} cleanup cases, {len(emails)} email cases, {len(edits)} edit cases, {len(undos)} undo cases"
 
 
 def _model():

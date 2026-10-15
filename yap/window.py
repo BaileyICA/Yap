@@ -1365,9 +1365,10 @@ class Window:
     def _history_control(self, parent):
         control = tk.Frame(parent, bg=parent.cget("bg"))
         labels = list(history.KEEP)
-        current = next((k for k, v in history.KEEP.items() if v == self.app.cfg["history_days"]),
-                       f"{self.app.cfg['history_days']} days")
-        var = tk.StringVar(self.root, value=current)
+        def current():
+            return next((k for k, v in history.KEEP.items() if v == self.app.cfg["history_days"]),
+                        f"{self.app.cfg['history_days']} days")
+        var = tk.StringVar(self.root, value=current())
         box = ttk.Combobox(control, textvariable=var, values=labels, width=11, font=font(10),
                            style="Yap.TCombobox", state="readonly")
         box.pack(side="left", padx=(0, px(10)))
@@ -1381,13 +1382,13 @@ class Window:
                     "Delete old dictations?",
                     f"This permanently deletes {doomed} dictation{'s' if doomed != 1 else ''} from your history.",
                     parent=self.root):
-                var.set(current)
+                var.set(current())
                 return
             try:
                 self.app.set_history_days(days)
             except (OSError, ValueError, TypeError) as exc:
                 messagebox.showerror("Could not save setting", str(exc), parent=self.root)
-                var.set(current)
+                var.set(current())
 
         def clear():
             count = history.count_older(-1)
@@ -1734,6 +1735,14 @@ class Window:
             self.meeting_status_label.configure(text=self.status_text)
 
     def _poll(self):
+        try:
+            self._poll_once()
+        except Exception as e:  # noqa: BLE001  # one bad command must not stop the loop for good
+            self.app.log(f"Window error: {type(e).__name__}: {e}")
+        finally:
+            self.root.after(250, self._poll)
+
+    def _poll_once(self):
         changed = status_changed = False
         try:
             while True:
@@ -1780,7 +1789,6 @@ class Window:
                 dot = getattr(self, "rec_dot", None)
                 if dot and dot.winfo_exists():
                     dot.configure(fg=RED if elapsed % 2 == 0 else _mix(RED, CARD, 0.35))
-        self.root.after(250, self._poll)
 
 
 def _clock(seconds):
