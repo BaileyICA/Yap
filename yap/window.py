@@ -12,7 +12,7 @@ from tkinter import font as tkfont, messagebox, ttk
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageTk
 
-from . import audio, autostart, config, history, textproc, updater
+from . import audio, autostart, changelog, config, history, textproc, updater
 from .branding import BRAND_NAVY, icon as yap_icon
 from .meetings import delete_meeting, list_meetings, load_meeting, monitors, set_group
 from .overlay import STYLES as OVERLAY_STYLES
@@ -441,6 +441,8 @@ class Window:
         _dark_title_bar(root)
         if not self.visible:
             root.withdraw()
+        elif self.app.cfg.get("last_seen_version") != updater.__version__:
+            root.after(400, self._whats_new)  # first window after an update (or install)
         self._ready.set()
         self._poll()
         root.mainloop()
@@ -1220,10 +1222,37 @@ class Window:
             Button(row, f"Update to v{self.app.update_info['version']}", self.app.install_update,
                    icon=GLYPH["download"], size=9).pack(side="right", padx=(px(8), 0))
         Button(row, "Check now", self._check_updates, "secondary", GLYPH["retry"], size=9).pack(side="right")
+        Button(row, "What's new", self._whats_new, "secondary", size=9).pack(side="right", padx=(0, px(8)))
         self._label(row, f"Version {updater.__version__}", 10, bold=True).pack(anchor="w")
         self.update_check_label = self._label(row, self._update_summary(), 9, MUTED)
         self.update_check_label.pack(anchor="w", pady=(px(1), 0))
         tk.Frame(page, bg=BG, height=px(30)).pack()
+
+    def _whats_new(self):
+        """Brief notes for the latest versions; remembers that this version's notes were shown."""
+        if self.app.cfg.get("last_seen_version") != updater.__version__:
+            self.app.cfg["last_seen_version"] = updater.__version__
+            try:
+                config.save_updates(last_seen_version=updater.__version__)
+            except (OSError, config.ConfigError):
+                pass  # worst case the dialog shows again next launch
+        dialog = tk.Toplevel(self.root)
+        dialog.title("What's new in Yap")
+        dialog.configure(bg=CARD)
+        dialog.resizable(False, False)
+        dialog.attributes("-topmost", True)
+        dialog.minsize(px(480), 1)
+        body = tk.Frame(dialog, bg=CARD, padx=px(24), pady=px(20))
+        body.pack(fill="both", expand=True)
+        self._label(body, "What's new in Yap", 12, bold=True, display=True).pack(anchor="w")
+        for version, notes in changelog.CHANGES:
+            self._label(body, f"v{version}", 10, ACCENT if version == updater.__version__ else TEXT,
+                        bold=True).pack(anchor="w", pady=(px(14), px(2)))
+            for note in notes:
+                self._label(body, f"•  {note}", 9, MUTED, wrap=True).pack(anchor="w", fill="x")
+        Button(body, "Got it", dialog.destroy, size=9).pack(anchor="e", pady=(px(18), 0))
+        dialog.update_idletasks()
+        _dark_title_bar(dialog)
 
     def _update_summary(self):
         info = self.app.update_info
