@@ -269,3 +269,18 @@ def list_meetings():
 def load_meeting(folder):
     with open(os.path.join(folder, "meeting.json"), encoding="utf-8") as f:
         return json.load(f)
+
+
+def set_group(folder, group):
+    """File a meeting under a user folder such as "ICA"; blank takes it out of any folder."""
+    data = load_meeting(folder)
+    data["group"] = group.strip()
+    with open(os.path.join(folder, "meeting.json"), "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+
+def delete_meeting(folder):
+    # Only ever remove a folder this module created under MEETINGS_DIR.
+    if os.path.dirname(os.path.abspath(folder)) != os.path.abspath(MEETINGS_DIR):
+        raise ValueError(f"Not a meeting folder: {folder}")
+    shutil.rmtree(folder)
