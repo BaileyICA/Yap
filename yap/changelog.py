@@ -1,6 +1,10 @@
 """Short release notes shown in the What's new dialog, newest first."""
 
 CHANGES = [
+    ("1.8.2", [
+        "Meeting folders show as a tree: a New folder button, meetings indented inside, click to collapse.",
+        "Right-click a folder to delete it; its meetings move back to the main list.",
+    ]),
     ("1.8.1", [
         "What's new: a short summary of recent versions, shown after an update and in Settings.",
     ]),
