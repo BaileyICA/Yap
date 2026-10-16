@@ -9,7 +9,7 @@ from PIL import Image
 
 BRAND_NAVY = "#0d3260"
 CREAM = "#fdf7e8"
-APP_USER_MODEL_ID = "FreeFlow.Yap"
+APP_USER_MODEL_ID = "Yap.Yap"
 RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 LOGO_PATH = RESOURCE_ROOT / "assets" / "yap-logo.png"
 
