@@ -14,7 +14,8 @@ from PIL import Image, ImageDraw, ImageFilter, ImageTk
 
 from . import audio, autostart, changelog, config, history, textproc, updater
 from .branding import BRAND_NAVY, icon as yap_icon
-from .meetings import delete_meeting, list_meetings, load_meeting, monitors, set_group
+from .meetings import (add_folder, delete_meeting, list_folders, list_meetings, load_meeting, monitors,
+                       remove_folder, set_group)
 from .overlay import STYLES as OVERLAY_STYLES
 
 BG = "#0b0d12"
@@ -40,9 +41,9 @@ GLYPH = {
     "record": "", "stop": "", "folder": "", "save": "",
     "keyboard": "", "copy": "", "retry": "",
     "shield": "", "edit": "", "check": "", "chip": "",
-    "close": "", "add": "", "download": "", "delete": "\ue74d",
+    "close": "", "add": "", "download": "", "delete": "\ue74d", "down": "\ue70d", "right": "\ue76c",
 }
-ALL_MEETINGS = "All meetings"
+NO_FOLDER = "No folder"
 NAV_ITEMS = ("Home", "Meetings", "History", "Settings")
 PLACEHOLDER = "Meeting title (optional)"
 DEFAULT_MIC = "Windows default"
@@ -378,7 +379,7 @@ class Window:
         self.root = None
         self.page = "Home"
         self.selected_folder = None
-        self.group_filter = ALL_MEETINGS
+        self.collapsed = set()
         self.status_text = "Loading speech model..."
         self.title_entry = None
         self.title_draft = ""
@@ -913,28 +914,28 @@ class Window:
         saved = tk.Frame(left, bg=BG)
         saved.pack(fill="x", padx=px(4), pady=(px(20), px(8)))
         self._label(saved, "SAVED", 8, FAINT, bold=True).pack(side="left")
+        Button(saved, "New folder", lambda: self._new_folder(listing), "ghost", GLYPH["add"], size=8).pack(
+            side="right")
         meetings = list_meetings()
         self.meetings_view = self._meetings_key(meetings)
-        groups = sorted({m.get("group") for m in meetings if m.get("group")}, key=str.lower)
-        if self.group_filter not in groups:
-            self.group_filter = ALL_MEETINGS
-        if groups:
-            var = tk.StringVar(self.root, value=self.group_filter)
-            pick = ttk.Combobox(saved, textvariable=var, values=[ALL_MEETINGS, *groups], width=16,
-                                font=font(9), style="Yap.TCombobox", state="readonly")
-            pick.pack(side="right")
-
-            def filtered(_e):
-                self.group_filter = var.get()
-                self._render()
-
-            pick.bind("<<ComboboxSelected>>", filtered)
-        if self.group_filter != ALL_MEETINGS:
-            meetings = [m for m in meetings if m.get("group") == self.group_filter]
         listing = self._scroll_area(left)
+        for name in list_folders(meetings):
+            inside = [m for m in meetings if m.get("group") == name]
+            self._folder_row(listing, name, len(inside))
+            if name in self.collapsed:
+                continue
+            nest = tk.Frame(listing, bg=listing.cget("bg"))
+            nest.pack(fill="x", padx=(px(18), 0))
+            for item in inside:
+                self._meeting_row(nest, item, lambda folder=item["folder"]: self._select_meeting(folder),
+                                  selected=item["folder"] == self.selected_folder)
+            if not inside:
+                self._label(nest, "Empty. Open a meeting and pick this folder.", 8, FAINT, wrap=True).pack(
+                    anchor="w", fill="x", padx=px(14), pady=px(4))
         for item in meetings:
-            self._meeting_row(listing, item, lambda folder=item["folder"]: self._select_meeting(folder),
-                              selected=item["folder"] == self.selected_folder)
+            if not item.get("group"):
+                self._meeting_row(listing, item, lambda folder=item["folder"]: self._select_meeting(folder),
+                                  selected=item["folder"] == self.selected_folder)
         if not meetings:
             self._label(listing, "No meetings yet. Your recordings will appear here.", 9, FAINT,
                         wrap=True).pack(anchor="w", fill="x", padx=px(4))
@@ -1048,34 +1049,95 @@ class Window:
             self._label(row.body, f"{os.path.getsize(path) / 1e6:.1f} MB", 9, MUTED).pack(side="left", padx=(px(10), 0))
 
     def _group_control(self, parent, folder, current):
+        folders = list_folders()
+        if not folders:
+            return
         row = tk.Frame(parent, bg=CARD)
         row.pack(fill="x", pady=(px(12), 0))
         self._label(row, "Folder", 9, MUTED).pack(side="left", padx=(0, px(10)))
-        groups = sorted({m.get("group") for m in list_meetings() if m.get("group")}, key=str.lower)
-        var = tk.StringVar(self.root, value=current)
-        box = ttk.Combobox(row, textvariable=var, values=groups, width=24, font=font(10), style="Yap.TCombobox")
+        var = tk.StringVar(self.root, value=current or NO_FOLDER)
+        box = ttk.Combobox(row, textvariable=var, values=[NO_FOLDER, *folders], width=24, font=font(10),
+                           style="Yap.TCombobox", state="readonly")
         box.pack(side="left")
-        self._label(row, "Type a new name to make one", 8, FAINT).pack(side="left",
-                                                                                      padx=(px(10), 0))
 
-        def save(_e=None):
-            nonlocal current
-            name = var.get().strip()
-            if name == current:
-                return
+        def save(_e):
+            name = "" if var.get() == NO_FOLDER else var.get()
             try:
                 set_group(folder, name)
             except (OSError, ValueError) as exc:
                 messagebox.showerror("Could not move meeting", str(exc), parent=self.root)
                 return
-            current = name  # Return then FocusOut must not save twice
-            if self.group_filter != ALL_MEETINGS:
-                self.group_filter = name or ALL_MEETINGS
+            self.collapsed.discard(name)
             self._render()
 
         box.bind("<<ComboboxSelected>>", save)
-        box.bind("<Return>", save)
-        box.bind("<FocusOut>", save)
+
+    def _folder_row(self, parent, name, count):
+        base = parent.cget("bg")
+        row = Card(parent, fill=base, border=None, radius=10, pad=(10, 8))
+        row.pack(fill="x", pady=px(1))
+        row.configure(cursor="hand2")
+        shut = name in self.collapsed
+        for text, color in ((GLYPH["right" if shut else "down"], FAINT), (GLYPH["folder"], ACCENT)):
+            tk.Label(row.body, text=text, bg=base, fg=color, font=icon_font(9)).pack(side="left", padx=(0, px(8)))
+        self._label(row.body, name if len(name) <= 30 else name[:28] + "…", 10, bold=True).pack(side="left")
+        self._label(row.body, str(count), 8, FAINT).pack(side="right")
+
+        def toggle(_e):
+            self.collapsed.symmetric_difference_update({name})
+            self._render()
+
+        def menu(e):
+            m = tk.Menu(self.root, tearoff=False, bg=RAISED, fg=TEXT, activebackground=ACCENT_SOFT,
+                        activeforeground=TEXT, font=font(9))
+            m.add_command(label="Delete folder", command=lambda: self._delete_folder(name, count))
+            m.tk_popup(e.x_root, e.y_root)
+
+        for widget in (row, *row.winfo_children(), *row.body.winfo_children()):
+            widget.bind("<Button-1>", toggle)
+            widget.bind("<Button-3>", menu)
+            widget.bind("<Enter>", lambda _e: row.repaint(fill=RAISED), add="+")
+            widget.bind("<Leave>", lambda _e: row.repaint(fill=base), add="+")
+
+    def _new_folder(self, listing):
+        if getattr(self, "folder_entry", None) and self.folder_entry.winfo_exists():
+            self.folder_entry.focus_set()
+            return
+        field = Card(listing, fill=FIELD, border=ACCENT, radius=10, pad=(12, 8))
+        children = listing.pack_slaves()
+        field.pack(fill="x", pady=px(1), **({"before": children[0]} if children else {}))
+        entry = tk.Entry(field.body, bg=FIELD, fg=TEXT, insertbackground=TEXT, relief="flat", font=font(10),
+                         highlightthickness=0, bd=0)
+        entry.pack(fill="x", ipady=px(2))
+        self.folder_entry = entry
+
+        def done(_e=None):
+            entry.unbind("<FocusOut>")  # Enter re-renders, which would fire FocusOut and save again
+            name = entry.get().strip()
+            if name:
+                try:
+                    add_folder(name)
+                except OSError as exc:
+                    messagebox.showerror("Could not make folder", str(exc), parent=self.root)
+            self._render()
+
+        entry.bind("<Return>", done)
+        entry.bind("<FocusOut>", done)
+        entry.bind("<Escape>", lambda _e: (entry.delete(0, "end"), done()))
+        entry.focus_set()
+
+    def _delete_folder(self, name, count):
+        if count and not messagebox.askyesno(
+                "Delete folder?", f"Delete the \"{name}\" folder? Its {count} meeting(s) move back to the "
+                "main list. No recordings are deleted.", parent=self.root):
+            return
+        try:
+            remove_folder(name)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Could not delete folder", str(exc), parent=self.root)
+            return
+        self.collapsed.discard(name)
+        self._render()
 
     def _delete_meeting(self, folder, title):
         if not messagebox.askyesno("Delete meeting?", f"This permanently deletes \"{title}\" and all its "

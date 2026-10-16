@@ -279,6 +279,40 @@ def set_group(folder, group):
         json.dump(data, f, indent=2)
 
 
+def _folders_path():
+    return os.path.join(MEETINGS_DIR, "folders.json")
+
+
+def list_folders(meetings=None):
+    """Folder names, including empty ones the user made and any a meeting is filed under."""
+    try:
+        with open(_folders_path(), encoding="utf-8") as f:
+            names = set(json.load(f))
+    except (OSError, ValueError, TypeError):
+        names = set()
+    names |= {m.get("group") for m in (list_meetings() if meetings is None else meetings) if m.get("group")}
+    return sorted(names, key=str.lower)
+
+
+def _save_folders(names):
+    os.makedirs(MEETINGS_DIR, exist_ok=True)
+    with open(_folders_path(), "w", encoding="utf-8") as f:
+        json.dump(sorted(names, key=str.lower), f, indent=2)
+
+
+def add_folder(name):
+    _save_folders(set(list_folders()) | {name.strip()})
+
+
+def remove_folder(name):
+    """Drop a folder; its meetings move back to the top level, not deleted."""
+    meetings = list_meetings()
+    for m in meetings:
+        if m.get("group") == name:
+            set_group(m["folder"], "")
+    _save_folders(set(list_folders(meetings)) - {name})
+
+
 def delete_meeting(folder):
     # Only ever remove a folder this module created under MEETINGS_DIR.
     if os.path.dirname(os.path.abspath(folder)) != os.path.abspath(MEETINGS_DIR):
