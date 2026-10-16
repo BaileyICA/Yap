@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageTk
 
 from . import audio, autostart, config, history, textproc, updater
 from .branding import BRAND_NAVY, icon as yap_icon
-from .meetings import list_meetings, load_meeting
+from .meetings import list_meetings, load_meeting, monitors
 from .overlay import STYLES as OVERLAY_STYLES
 
 BG = "#0b0d12"
@@ -932,7 +932,38 @@ class Window:
         if title == PLACEHOLDER and self.title_entry.cget("fg") == FAINT:
             title = ""
         self.title_draft = ""
-        self.app.start_meeting(title, self.computer_var.get(), self.screen_var.get())
+        computer, screen = self.computer_var.get(), self.screen_var.get()
+        screens = monitors() if screen else []
+        if len(screens) < 2:
+            self.app.start_meeting(title, computer, screen)
+            return
+        # Several monitors: cover each one and record whichever gets clicked.
+        covers = []
+
+        def close(_e=None):
+            for cover in covers:
+                cover.destroy()
+
+        def pick(rect):
+            close()
+            self.app.start_meeting(title, computer, screen, rect)
+
+        for n, rect in enumerate(screens, 1):
+            left, top, right, bottom = rect
+            cover = tk.Toplevel(self.root, bg=BG, cursor="hand2")
+            cover.overrideredirect(True)
+            cover.attributes("-topmost", True, "-alpha", 0.85)
+            cover.geometry(f"{right - left}x{bottom - top}+{left}+{top}")
+            middle = tk.Frame(cover, bg=BG)
+            middle.place(relx=0.5, rely=0.5, anchor="center")
+            for text, size, color in ((f"Screen {n}", 40, TEXT), ("Click to record this screen", 14, MUTED),
+                                      ("Esc to cancel", 10, FAINT)):
+                self._label(middle, text, size, color, bold=size > 20, display=True).pack(pady=px(4))
+            for widget in (cover, middle, *middle.winfo_children()):
+                widget.bind("<Button-1>", lambda _e, rect=rect: pick(rect))
+            cover.bind("<Escape>", close)
+            covers.append(cover)
+        covers[0].focus_force()
 
     def _select_meeting(self, folder):
         self.selected_folder = folder

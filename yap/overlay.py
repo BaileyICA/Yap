@@ -1,4 +1,5 @@
 import ctypes
+import gc
 import math
 import queue
 import random
@@ -383,3 +384,53 @@ class Overlay:
         build()
         tick()
         root.mainloop()
+
+
+WS_EX_LAYERED, WS_EX_TRANSPARENT, WDA_EXCLUDEFROMCAPTURE = 0x00080000, 0x00000020, 0x11
+
+
+class ScreenBorder:
+    """Red frame around the monitor being recorded. Click-through, and kept out of the recording."""
+
+    def __init__(self, rect=None):
+        self._done = threading.Event()
+        threading.Thread(target=self._run, args=(rect,), daemon=True).start()
+
+    def close(self):
+        self._done.set()
+
+    def _run(self, rect):
+        try:
+            ctypes.windll.user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))
+        except (AttributeError, OSError):
+            pass
+        root = tk.Tk()
+        left, top, right, bottom = rect or (0, 0, root.winfo_screenwidth(), root.winfo_screenheight())
+        w, h = right - left, bottom - top
+        t = max(3, round(4 * root.winfo_fpixels("1i") / 96.0))
+        root.overrideredirect(True)
+        root.attributes("-topmost", True, "-transparentcolor", KEY)
+        root.configure(bg=KEY)
+        root.geometry(f"{w}x{h}+{left}+{top}")
+        cv = tk.Canvas(root, width=w, height=h, bg=KEY, highlightthickness=0)
+        cv.pack()
+        cv.create_rectangle(t // 2, t // 2, w - t // 2 - 1, h - t // 2 - 1, outline="#ff3b30", width=t)
+        root.update_idletasks()
+        u = ctypes.windll.user32
+        hwnd = u.GetAncestor(root.winfo_id(), 2) or root.winfo_id()
+        ex = u.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        u.SetWindowLongW(hwnd, GWL_EXSTYLE,
+                         ex | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_TRANSPARENT)
+        u.SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)  # Win10 2004+; older shows it in the video
+
+        def poll():
+            if self._done.is_set():
+                root.destroy()
+            else:
+                root.after(200, poll)
+
+        poll()
+        root.mainloop()
+        # poll() keeps root in a reference cycle; free Tcl here, as freeing it from another thread aborts.
+        del root, cv, poll
+        gc.collect()

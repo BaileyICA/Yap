@@ -1,5 +1,6 @@
 """Record a meeting to local files: microphone and computer audio as WAV, the screen as MP4."""
 
+import ctypes
 import json
 import os
 import queue
@@ -12,10 +13,13 @@ from fractions import Fraction
 
 import numpy as np
 import soundcard as sc
-from PIL import ImageGrab
+from ctypes import wintypes
+
+from PIL import ImageDraw, ImageGrab
 
 from . import config
 from .audio import open_input
+from .overlay import ScreenBorder
 
 RATE = 16000
 SCREEN_FPS = 5
@@ -27,6 +31,37 @@ def _pcm(data):
     return (np.clip(data, -1, 1) * 32767).astype("<i2").tobytes()
 
 
+def monitors():
+    """Each monitor as physical (left, top, right, bottom), primary first."""
+    u = ctypes.windll.user32
+    u.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+    old = u.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))
+    rects = []
+    proc = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p,
+                              ctypes.POINTER(wintypes.RECT), ctypes.c_void_p)
+    cb = proc(lambda _m, _dc, r, _d: rects.append((r[0].left, r[0].top, r[0].right, r[0].bottom)) or 1)
+    try:
+        u.EnumDisplayMonitors(None, None, cb, 0)
+    finally:
+        if old:
+            u.SetThreadDpiAwarenessContext(ctypes.c_void_p(old))
+    return sorted(rects, key=lambda r: (r[:2] != (0, 0), r[0], r[1]))
+
+
+def _draw_cursor(img, left, top):
+    """GDI screen grabs leave the pointer out; ring where it is so viewers can follow it."""
+    pt = wintypes.POINT()
+    if not ctypes.windll.user32.GetCursorPos(ctypes.byref(pt)):
+        return
+    x, y = pt.x - left, pt.y - top
+    if not (0 <= x < img.width and 0 <= y < img.height):
+        return
+    d = ImageDraw.Draw(img)
+    for radius, color, width in ((16, "black", 6), (14, "#ffd60a", 3)):
+        d.ellipse((x - radius, y - radius, x + radius, y + radius), outline=color, width=width)
+    d.ellipse((x - 3, y - 3, x + 3, y + 3), fill="#ffd60a", outline="black")
+
+
 def _writer(path):
     f = wave.open(path, "wb")
     f.setnchannels(1)
@@ -36,7 +71,7 @@ def _writer(path):
 
 
 class MeetingCapture:
-    def __init__(self, title, computer_audio=True, microphone="", log=None, screen=True):
+    def __init__(self, title, computer_audio=True, microphone="", log=None, screen=True, monitor=None):
         os.makedirs(MEETINGS_DIR, exist_ok=True)
         self.created = datetime.now()
         self.id = self.created.strftime("%Y%m%d-%H%M%S-%f")
@@ -45,6 +80,8 @@ class MeetingCapture:
         self.title = title.strip() or self.created.strftime("Meeting %d %b %Y, %I:%M %p")
         self.computer_audio = computer_audio
         self.screen = screen
+        self.monitor = monitor  # physical (left, top, right, bottom); None = primary
+        self._border = None
         self.microphone = microphone
         self.log = log
         self.mic_path = os.path.join(self.folder, "microphone.wav")
@@ -66,6 +103,8 @@ class MeetingCapture:
         except Exception:
             # Nothing was recorded; don't leave an empty folder that never shows up in the list.
             self._stop.set()
+            if self._border:
+                self._border.close()
             if self._mic_stream:
                 self._mic_stream.close()
                 self._mic_stream = None
@@ -93,6 +132,8 @@ class MeetingCapture:
             t = threading.Thread(target=target, daemon=True)
             t.start()
             self._threads.append(t)
+        if self.screen:
+            self._border = ScreenBorder(self.monitor)
         self._write_meta("recording")
 
     def _write_mic(self):
@@ -104,10 +145,16 @@ class MeetingCapture:
                     pass
 
     def _record_screen(self):
-        # shortcut: primary monitor only, 5 fps; raise SCREEN_FPS or grab per monitor if slides move faster.
+        # shortcut: 5 fps; raise SCREEN_FPS if slides move faster.
         import av
 
         try:
+            # Physical pixels, so the grab box and cursor position match on scaled displays.
+            ctypes.windll.user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))
+        except (AttributeError, OSError):
+            pass
+        try:
+            box = self.monitor or monitors()[0]
             container = av.open(self.screen_path, "w")
             try:
                 stream = None
@@ -118,7 +165,8 @@ class MeetingCapture:
                     if pts <= last:
                         time.sleep(0.02)
                         continue
-                    img = ImageGrab.grab().convert("RGB")
+                    img = ImageGrab.grab(bbox=box, all_screens=True).convert("RGB")
+                    _draw_cursor(img, box[0], box[1])
                     if stream is None:
                         w = min(img.width, SCREEN_MAX_WIDTH) // 2 * 2
                         h = round(img.height * w / img.width) // 2 * 2
@@ -176,6 +224,8 @@ class MeetingCapture:
             ctypes.windll.ole32.CoUninitialize()
 
     def stop(self):
+        if self._border:
+            self._border.close()
         if self._mic_stream:
             self._mic_stream.stop()
             self._mic_stream.close()

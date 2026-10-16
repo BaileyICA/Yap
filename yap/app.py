@@ -503,7 +503,7 @@ class App:
         self.enabled = not self.enabled
         self._tray_status()
 
-    def start_meeting(self, title, computer_audio=True, screen=True):
+    def start_meeting(self, title, computer_audio=True, screen=True, monitor=None):
         if self.state != "idle" or self.meeting_capture:
             if self.window:
                 self.window.update("Wait until dictation or the speech model finishes.")
@@ -515,7 +515,8 @@ class App:
 
         def begin():
             try:
-                capture = MeetingCapture(title, computer_audio, self.cfg["microphone"], self.log, screen)
+                capture = MeetingCapture(title, computer_audio, self.cfg["microphone"], self.log, screen,
+                                         monitor)
                 capture.start()
                 self.meeting_capture = capture
                 self.state = "meeting"
