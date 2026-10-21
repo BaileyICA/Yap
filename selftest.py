@@ -119,14 +119,17 @@ def _stats():
     from datetime import date
 
     from yap import stats
-    days = {"2026-10-12": [1, 5], "2026-10-19": [2, 10], "2026-10-21": [1, 3], "2026-10-22": [4, 40]}
+    days = {"2026-10-12": [1, 5], "2026-10-19": [2, 10], "2026-10-21": [1, 3], "2026-10-22": [4, 40, 12.0, 30]}
     today = date(2026, 10, 22)  # a Thursday
     daily, weekly = stats.daily(days, 3, today), stats.weekly(days, 2, today)
     want_daily = [(date(2026, 10, 20), 0, 0), (date(2026, 10, 21), 1, 3), (date(2026, 10, 22), 4, 40)]
     want_weekly = [(date(2026, 10, 12), 1, 5), (date(2026, 10, 19), 7, 53)]
     if daily != want_daily or weekly != want_weekly:
         raise RuntimeError(f"daily {daily}, weekly {weekly}")
-    return "daily and weekly totals"
+    wpm = stats.speaking_wpm(days)
+    if wpm != 150 or stats.minutes_saved(150, wpm) != 2.75:
+        raise RuntimeError(f"speaking {wpm} wpm, saved {stats.minutes_saved(150, wpm)} min")
+    return "daily and weekly totals, speaking speed, time saved"
 
 
 def _model():

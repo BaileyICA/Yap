@@ -275,7 +275,7 @@ class App:
                                          daemon=True).start()
                     history.append(raw, text, self.cfg["history_days"])
                     try:
-                        stats.record(text)
+                        stats.record(text, len(audio) / SAMPLE_RATE)
                     except OSError as e:
                         self.log(f"stats not saved: {e}")
                     self.overlay.show("done", "Done")

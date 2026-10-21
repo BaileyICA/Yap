@@ -1794,20 +1794,34 @@ class Window:
     def _stats(self):
         page = self._scroll_area(self.main)
         days = stats.load()
-        total = sum(words for _, words in days.values())
-        self._header(page, "Your stats", f"{total:,} words dictated with Yap so far.")
+        total = sum(day[1] for day in days.values())
+        self._header(page, "Your stats", f"{total:,} words dictated with Yap so far. Time saved compares "
+                                         f"typing the same words at {stats.TYPING_WPM} words a minute.")
         daily, weekly = stats.daily(days), stats.weekly(days)
+        wpm = stats.speaking_wpm(days)
 
-        tiles = tk.Frame(page, bg=BG)
-        tiles.pack(fill="x", padx=px(36))
-        figures = (("Words today", daily[-1][2]), ("Dictations today", daily[-1][1]),
-                   ("Words this week", weekly[-1][2]), ("Dictations this week", weekly[-1][1]))
-        for index, (name, value) in enumerate(figures):
-            tile = Card(tiles, radius=14, pad=(18, 16))
-            tile.pack(side="left", fill="x", expand=True,
-                      padx=(0 if index == 0 else px(6), 0 if index == len(figures) - 1 else px(6)))
-            self._label(tile.body, name, 9, MUTED).pack(anchor="w")
-            self._label(tile.body, f"{value:,}", 18, bold=True, display=True).pack(anchor="w", pady=(px(6), 0))
+        def saved(words):
+            if not wpm:
+                return "—"
+            minutes = round(stats.minutes_saved(words, wpm))
+            return f"{minutes // 60} h {minutes % 60} min" if minutes >= 60 else f"{minutes} min"
+
+        for pady, figures in (
+                (0, (("Words today", f"{daily[-1][2]:,}"), ("Dictations today", f"{daily[-1][1]:,}"),
+                     ("Words this week", f"{weekly[-1][2]:,}"), ("Dictations this week", f"{weekly[-1][1]:,}"))),
+                (px(12), (("Speaking speed", f"{wpm:.0f} wpm" if wpm else "—"), ("Time saved today", saved(daily[-1][2])),
+                          ("Time saved this week", saved(weekly[-1][2])), ("Time saved in total", saved(total))))):
+            tiles = tk.Frame(page, bg=BG)
+            tiles.pack(fill="x", padx=px(36), pady=(pady, 0))
+            for index, (name, value) in enumerate(figures):
+                tile = Card(tiles, radius=14, pad=(18, 16))
+                tile.pack(side="left", fill="x", expand=True,
+                          padx=(0 if index == 0 else px(6), 0 if index == len(figures) - 1 else px(6)))
+                self._label(tile.body, name, 9, MUTED).pack(anchor="w")
+                self._label(tile.body, value, 18, bold=True, display=True).pack(anchor="w", pady=(px(6), 0))
+        if not wpm:
+            self._label(page, "Speaking speed and time saved appear after your next dictation.", 9, FAINT).pack(
+                anchor="w", padx=px(38), pady=(px(8), 0))
 
         today = date.today()
         charts = (

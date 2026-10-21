@@ -4,6 +4,7 @@ CHANGES = [
     ("1.9.0", [
         "New Stats page: words dictated and dictations per day and per week, with bar charts.",
         "Stats keep counting even when history is off; they are seeded from your existing history.",
+        "Speaking speed in words a minute, and time saved compared with typing at 40 words a minute.",
     ]),
     ("1.8.2", [
         "Meeting folders show as a tree: a New folder button, meetings indented inside, click to collapse.",
