@@ -6,13 +6,13 @@ import queue
 import threading
 import time
 import tkinter as tk
-from datetime import datetime
+from datetime import date, datetime
 from tkinter import font as tkfont, messagebox, ttk
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageTk
 
-from . import audio, autostart, changelog, config, history, textproc, updater
+from . import audio, autostart, changelog, config, history, stats, textproc, updater
 from .branding import BRAND_NAVY, icon as yap_icon
 from .meetings import (add_folder, delete_meeting, list_folders, list_meetings, load_meeting, monitors,
                        remove_folder, set_group)
@@ -37,6 +37,7 @@ RED = "#ff6b6b"
 
 # Segoe Fluent Icons / MDL2 Assets code points.
 GLYPH = {
+    "Stats": "",
     "Home": "", "Meetings": "", "History": "", "Settings": "",
     "record": "", "stop": "", "folder": "", "save": "",
     "keyboard": "", "copy": "", "retry": "",
@@ -44,7 +45,7 @@ GLYPH = {
     "close": "", "add": "", "download": "", "delete": "\ue74d", "down": "\ue70d", "right": "\ue76c",
 }
 NO_FOLDER = "No folder"
-NAV_ITEMS = ("Home", "Meetings", "History", "Settings")
+NAV_ITEMS = ("Home", "Meetings", "History", "Stats", "Settings")
 PLACEHOLDER = "Meeting title (optional)"
 DEFAULT_MIC = "Windows default"
 
@@ -666,6 +667,8 @@ class Window:
             self._meetings()
         elif self.page == "History":
             self._history()
+        elif self.page == "Stats":
+            self._stats()
         else:
             self._settings()
 
@@ -1785,6 +1788,87 @@ class Window:
                 day = stamp[:10]
             self._history_entry(page, item)
         tk.Frame(page, bg=BG, height=px(30)).pack()
+
+    # ---------------------------------------------------------- stats ----
+
+    def _stats(self):
+        page = self._scroll_area(self.main)
+        days = stats.load()
+        total = sum(words for _, words in days.values())
+        self._header(page, "Your stats", f"{total:,} words dictated with Yap so far.")
+        daily, weekly = stats.daily(days), stats.weekly(days)
+
+        tiles = tk.Frame(page, bg=BG)
+        tiles.pack(fill="x", padx=px(36))
+        figures = (("Words today", daily[-1][2]), ("Dictations today", daily[-1][1]),
+                   ("Words this week", weekly[-1][2]), ("Dictations this week", weekly[-1][1]))
+        for index, (name, value) in enumerate(figures):
+            tile = Card(tiles, radius=14, pad=(18, 16))
+            tile.pack(side="left", fill="x", expand=True,
+                      padx=(0 if index == 0 else px(6), 0 if index == len(figures) - 1 else px(6)))
+            self._label(tile.body, name, 9, MUTED).pack(anchor="w")
+            self._label(tile.body, f"{value:,}", 18, bold=True, display=True).pack(anchor="w", pady=(px(6), 0))
+
+        today = date.today()
+        charts = (
+            ("Last 14 days", daily, lambda d: "Today" if d == today else f"{d:%a} {d.day} {d:%b}",
+             lambda d: str(d.day)),
+            ("Last 8 weeks", weekly, lambda d: "This week" if d == weekly[-1][0] else f"Week of {d.day} {d:%b}",
+             lambda d: f"{d.day}/{d.month}"),
+        )
+        for heading, rows, name, tick in charts:
+            self._section(page, heading)
+            row = tk.Frame(page, bg=BG)
+            row.pack(fill="x", padx=px(36))
+            for index, (title, unit, column) in enumerate((("Words", "word", 2), ("Dictations", "dictation", 1))):
+                chart = self._bar_chart(row, title, unit, [(r[0], r[column]) for r in rows], name, tick)
+                chart.pack(side="left", fill="x", expand=True, padx=(0, px(6)) if index == 0 else (px(6), 0))
+        tk.Frame(page, bg=BG, height=px(30)).pack()
+
+    def _bar_chart(self, parent, title, unit, rows, name, tick):
+        """A card with one bar per (date, value) row; hovering a bar puts its figure in the caption."""
+        card = Card(parent, radius=14, pad=(18, 16))
+        self._label(card.body, title, 10, bold=True).pack(anchor="w")
+        caption = self._label(card.body, "", 9, MUTED)
+        caption.pack(anchor="w", pady=(px(2), px(10)))
+        canvas = tk.Canvas(card.body, bg=CARD, highlightthickness=0, bd=0, height=px(140), width=1)
+        canvas.pack(fill="x")
+        peak = max(value for _, value in rows) or 1
+        state = {"hover": len(rows) - 1}
+
+        def paint(_event=None):
+            day, value = rows[state["hover"]]
+            caption.configure(text=f"{name(day)} · {value:,} {unit}{'' if value == 1 else 's'}")
+            canvas.delete("all")
+            w, h = canvas.winfo_width(), canvas.winfo_height()
+            base = h - px(20)
+            slot = w / len(rows)
+            bar = int(max(px(4), min(px(26), slot * 0.62)))
+            canvas.create_line(0, base, w, base, fill=BORDER)
+            for index, (day, value) in enumerate(rows):
+                active = index == state["hover"]
+                center = slot * (index + 0.5)
+                if value:
+                    height = int(max(px(3), (base - px(4)) * value / peak))
+                    round_rect(canvas, int(center - bar / 2), base - height, bar, height, px(4),
+                               ACCENT if active else _mix(ACCENT, CARD, 0.42))
+                canvas.create_text(center, base + px(11), text=tick(day), font=font(7, bold=active),
+                                   fill=TEXT if active else FAINT)
+
+        def hover(event):
+            index = min(len(rows) - 1, max(0, int(event.x * len(rows) / max(1, canvas.winfo_width()))))
+            if index != state["hover"]:
+                state["hover"] = index
+                paint()
+
+        def leave(_event):
+            state["hover"] = len(rows) - 1
+            paint()
+
+        canvas.bind("<Configure>", paint)
+        canvas.bind("<Motion>", hover)
+        canvas.bind("<Leave>", leave)
+        return card
 
     def _history_entry(self, parent, item):
         card = Card(parent, radius=12, pad=(18, 12))

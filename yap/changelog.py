@@ -1,6 +1,10 @@
 """Short release notes shown in the What's new dialog, newest first."""
 
 CHANGES = [
+    ("1.9.0", [
+        "New Stats page: words dictated and dictations per day and per week, with bar charts.",
+        "Stats keep counting even when history is off; they are seeded from your existing history.",
+    ]),
     ("1.8.2", [
         "Meeting folders show as a tree: a New folder button, meetings indented inside, click to collapse.",
         "Right-click a folder to delete it; its meetings move back to the main list.",

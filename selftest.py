@@ -115,6 +115,20 @@ def _text():
     return f"{len(cases)} cleanup cases, {len(emails)} email cases, {len(edits)} edit cases, {len(undos)} undo cases"
 
 
+def _stats():
+    from datetime import date
+
+    from yap import stats
+    days = {"2026-10-12": [1, 5], "2026-10-19": [2, 10], "2026-10-21": [1, 3], "2026-10-22": [4, 40]}
+    today = date(2026, 10, 22)  # a Thursday
+    daily, weekly = stats.daily(days, 3, today), stats.weekly(days, 2, today)
+    want_daily = [(date(2026, 10, 20), 0, 0), (date(2026, 10, 21), 1, 3), (date(2026, 10, 22), 4, 40)]
+    want_weekly = [(date(2026, 10, 12), 1, 5), (date(2026, 10, 19), 7, 53)]
+    if daily != want_daily or weekly != want_weekly:
+        raise RuntimeError(f"daily {daily}, weekly {weekly}")
+    return "daily and weekly totals"
+
+
 def _model():
     from yap.transcribe import Transcriber
 
@@ -134,6 +148,7 @@ check("config.json", _config)
 check("microphone", _mic)
 check("clipboard", _clipboard)
 check("text cleanup", _text)
+check("usage stats", _stats)
 check("speech model", _model)
 
 print()

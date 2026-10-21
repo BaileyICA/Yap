@@ -7,7 +7,7 @@ import winsound
 
 import keyboard
 import pystray
-from . import apps, autostart, config, history, inputwatch, textproc, uia, updater
+from . import apps, autostart, config, history, inputwatch, stats, textproc, uia, updater
 from .audio import Recorder, SAMPLE_RATE
 from .branding import icon as _icon
 from .inject import erase, insert
@@ -274,6 +274,10 @@ class App:
                         threading.Thread(target=self._watch_edits, args=(self.edit_watch, text.rstrip()),
                                          daemon=True).start()
                     history.append(raw, text, self.cfg["history_days"])
+                    try:
+                        stats.record(text)
+                    except OSError as e:
+                        self.log(f"stats not saved: {e}")
                     self.overlay.show("done", "Done")
                 elif undo:
                     self.overlay.show("done" if scratched else "info", "Scratched" if scratched else "Nothing to scratch")
