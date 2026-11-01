@@ -71,7 +71,8 @@ def _writer(path):
 
 
 class MeetingCapture:
-    def __init__(self, title, computer_audio=True, microphone="", log=None, screen=True, monitor=None):
+    def __init__(self, title, computer_audio=True, microphone="", log=None, screen=True, monitor=None,
+                 on_warning=None):
         os.makedirs(MEETINGS_DIR, exist_ok=True)
         self.created = datetime.now()
         self.id = self.created.strftime("%Y%m%d-%H%M%S-%f")
@@ -92,6 +93,9 @@ class MeetingCapture:
         self._stop = threading.Event()
         self._loop_ready = threading.Event()
         self._loop_error = None
+        self._loop_down = False
+        self._loop_drops = 0
+        self.on_warning = on_warning  # called from capture threads while recording
         self._mic_stream = None
         self._threads = []
         self.started = None
@@ -186,6 +190,7 @@ class MeetingCapture:
                 container.close()
         except Exception as exc:
             self._screen_error = str(exc)
+            self._warn(f"Screen recording stopped ({exc}). Audio is still recording.")
 
     def _record_loopback(self):
         import ctypes
@@ -194,29 +199,47 @@ class MeetingCapture:
         # needs a COM apartment for WASAPI calls. Keep it alive until capture closes.
         ctypes.windll.ole32.CoInitializeEx(None, 0)
         try:
-            speaker = sc.default_speaker()
-            if speaker is None:
-                raise RuntimeError("No default computer audio output was found.")
-            device = sc.get_microphone(id=speaker.id, include_loopback=True)
-            with device.recorder(samplerate=RATE, blocksize=2048) as source, _writer(self.system_path) as out:
-                self._loop_started = time.monotonic()
-                self._loop_ready.set()
+            with _writer(self.system_path) as out:
                 written = 0
-                origin = self._loop_started
+                origin = None
                 while not self._stop.is_set():
-                    block = source.record(numframes=2048)
-                    if block is not None and len(block):
-                        mono = np.asarray(block, dtype=np.float32).mean(axis=1)
-                        out.writeframes(_pcm(mono))
-                        written += len(mono)
-                    else:
-                        time.sleep(0.03)
-                    # WASAPI can return no frames during silence. Preserve timing.
-                    elapsed = int((time.monotonic() - origin) * RATE)
-                    if elapsed - written > RATE // 4:
-                        pad = min(elapsed - written - RATE // 8, RATE)
-                        out.writeframes(b"\0\0" * pad)
-                        written += pad
+                    try:
+                        speaker = sc.default_speaker()
+                        if speaker is None:
+                            raise RuntimeError("No default computer audio output was found.")
+                        device = sc.get_microphone(id=speaker.id, include_loopback=True)
+                        with device.recorder(samplerate=RATE, blocksize=2048) as source:
+                            if origin is None:
+                                origin = self._loop_started = time.monotonic()
+                                self._loop_ready.set()
+                            elif self._loop_down:
+                                self._loop_down = False
+                                self._warn("Computer audio reconnected. Recording continues.")
+                            while not self._stop.is_set():
+                                block = source.record(numframes=2048)
+                                if block is not None and len(block):
+                                    mono = np.asarray(block, dtype=np.float32).mean(axis=1)
+                                    out.writeframes(_pcm(mono))
+                                    written += len(mono)
+                                else:
+                                    time.sleep(0.03)
+                                # WASAPI can return no frames during silence. Preserve timing.
+                                elapsed = int((time.monotonic() - origin) * RATE)
+                                if elapsed - written > RATE // 4:
+                                    pad = elapsed - written - RATE // 8
+                                    out.writeframes(b"\0\0" * pad)
+                                    written += pad
+                    except Exception as exc:
+                        if origin is None:
+                            raise
+                        # SoundCard raises on harmless S_FALSE ("Error 0x100000001") and on device
+                        # changes; reopen the default output instead of losing the rest of the meeting.
+                        self._loop_error = str(exc)
+                        if not self._loop_down:
+                            self._loop_down = True
+                            self._loop_drops += 1
+                            self._warn(f"Computer audio dropped ({exc}). Reconnecting...")
+                        self._stop.wait(1)
         except Exception as exc:
             self._loop_error = str(exc)
             self._loop_ready.set()
@@ -235,12 +258,26 @@ class MeetingCapture:
             t.join(timeout=4)
         duration = time.monotonic() - self.started if self.started else 0
         offset = (self._loop_started - self.started) if self._loop_started and self.started else 0
+        if self._loop_drops:
+            loop = (f"Computer audio dropped {self._loop_drops} time(s) ({self._loop_error}); "
+                    f"gaps are silent{' and it never came back' if self._loop_down else ''}.")
+        else:
+            loop = f"Computer audio capture stopped: {self._loop_error}." if self._loop_error else ""
         warning = " ".join(m for m in (
-            f"Computer audio capture stopped: {self._loop_error}." if self._loop_error else "",
+            loop,
             f"Screen recording stopped: {self._screen_error}." if self._screen_error else "") if m) or None
         self._write_meta("saved", duration=duration, computer_offset=round(offset, 3),
                          capture_warning=warning)
         return self.folder
+
+    def _warn(self, message):
+        if self.log:
+            self.log(f"Meeting: {message}")
+        if self.on_warning:
+            try:
+                self.on_warning(message)
+            except Exception:  # noqa: BLE001 - an alert failing must not stop the recording
+                pass
 
     def _write_meta(self, status, **extra):
         path = os.path.join(self.folder, "meeting.json")

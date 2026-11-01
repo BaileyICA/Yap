@@ -520,7 +520,7 @@ class App:
         def begin():
             try:
                 capture = MeetingCapture(title, computer_audio, self.cfg["microphone"], self.log, screen,
-                                         monitor)
+                                         monitor, self._meeting_warning)
                 capture.start()
                 self.meeting_capture = capture
                 self.state = "meeting"
@@ -534,6 +534,11 @@ class App:
                 self.window.update(f"Could not start recording: {exc}")
 
         threading.Thread(target=begin, daemon=True).start()
+
+    def _meeting_warning(self, message):
+        self.tray.notify(message, "Yap meeting recording")
+        if self.window:
+            self.window.update(message)
 
     def stop_meeting(self):
         capture = self.meeting_capture
