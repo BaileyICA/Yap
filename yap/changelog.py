@@ -1,6 +1,10 @@
 """Short release notes shown in the What's new dialog, newest first."""
 
 CHANGES = [
+    ("1.9.1", [
+        "Meetings: if computer audio drops mid-recording, Yap reconnects it and fills the gap with silence.",
+        "A tray alert shows when meeting audio or screen capture drops, and again when audio is back.",
+    ]),
     ("1.9.0", [
         "New Stats page: words dictated and dictations per day and per week, with bar charts.",
         "Stats keep counting even when history is off; they are seeded from your existing history.",
