@@ -287,6 +287,13 @@ class App:
             except Exception as e:  # noqa: BLE001
                 self.log(f"error: {type(e).__name__}: {e}")
                 self.overlay.show("info", "Error (see data/yap.log)")
+                # A dead CUDA context (driver reset, sleep) fails every clip until the model is reloaded.
+                if self.tr.device == "cuda" and "CUDA failure" in str(e):
+                    self.log("GPU stopped responding; reloading the speech model")
+                    try:
+                        self.tr.load()  # retries GPU, falls back to CPU in auto mode
+                    except Exception as reload_error:  # noqa: BLE001
+                        self.log(f"reload failed: {type(reload_error).__name__}: {reload_error}")
             time.sleep(0.6)
             if self.state == "busy":
                 self.state = "idle"
