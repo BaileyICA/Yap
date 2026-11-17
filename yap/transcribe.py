@@ -56,8 +56,14 @@ class Transcriber:
         self.name = None
         self.beam = 1
         self._vad_lock = threading.Lock()  # dictation and meeting processing can both reach for it
+        # Freeing a CUDA session after the GPU context dies aborts the whole process (0xc0000409),
+        # so models replaced by a reload are parked here for the life of the process instead.
+        self._retired = []
 
     def load(self):
+        if self.device == "cuda":
+            self._retired.append((self.model, self.vad))
+        self.vad = None  # wraps the old model; rebuilt from the new one on next use
         if self.engine == "whisper":
             self._load_whisper()
         else:
@@ -91,6 +97,7 @@ class Transcriber:
             self.log(f"{self.name} only understands English; use nemo-parakeet-tdt-0.6b-v3 or Whisper for other languages.")
         silence = np.zeros(16000, dtype=np.float32)
         if self.device_preference != "cpu" and "CUDAExecutionProvider" in ort.get_available_providers():
+            model = None
             try:
                 self.log(f"Loading {self.name} on GPU...")
                 model = self._parakeet_session(name, ["CUDAExecutionProvider", "CPUExecutionProvider"], None)
@@ -103,6 +110,7 @@ class Transcriber:
             except Exception as e:  # noqa: BLE001
                 if self.device_preference == "gpu":
                     raise RuntimeError(f"GPU was selected, but Parakeet could not start on CUDA: {e}") from e
+                self._retired.append(model)  # may hold a CUDA context; freeing it can abort
                 self.log(f"GPU unavailable ({type(e).__name__}: {e}); using CPU")
         elif self.device_preference == "gpu":
             available = ", ".join(ort.get_available_providers())
