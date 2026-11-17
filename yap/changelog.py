@@ -1,6 +1,10 @@
 """Short release notes shown in the What's new dialog, newest first."""
 
 CHANGES = [
+    ("1.9.2", [
+        "If the GPU stops responding (driver reset, sleep), Yap reloads the speech model instead of failing every dictation.",
+        "Fixed a crash right after that reload, when Yap switched to the CPU.",
+    ]),
     ("1.9.1", [
         "Meetings: if computer audio drops mid-recording, Yap reconnects it and fills the gap with silence.",
         "A tray alert shows when meeting audio or screen capture drops, and again when audio is back.",
